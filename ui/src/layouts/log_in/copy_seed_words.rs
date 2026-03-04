@@ -22,7 +22,7 @@ use warp::multipass;
 
 // styles for this layout are in layouts/style.scss
 #[component]
-pub fn Layout(cx: Scope, page: UseState<AuthPages>, username: String, pin: String) -> Element {
+pub fn Layout(cx: Scope, page: UseState<AuthPages>, username: String, pin: String) -> Element<'a> {
     let state = use_ref(cx, State::load);
     let window = use_window(cx);
 
@@ -72,7 +72,7 @@ fn SeedWords(
     pin: String,
     seed_words: String,
     words: Vec<String>,
-) -> Element {
+) -> Element<'a> {
     let copied = use_ref(cx, || false);
     let loading = use_state(cx, || false);
 
