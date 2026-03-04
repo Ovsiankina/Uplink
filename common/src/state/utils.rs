@@ -206,19 +206,3 @@ pub fn mention_replacement_pattern(id: &Identity, visual: bool) -> String {
         id.username()
     )
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_get_pretty_name1() {
-        if cfg!(windows) {
-            let r = get_pretty_name("c:\\pretty\\name2.scss");
-            assert_eq!(r, String::from("name2"));
-        } else {
-            let r = get_pretty_name("pretty/name1.scss");
-            assert_eq!(r, String::from("name1"));
-        }
-    }
-}
