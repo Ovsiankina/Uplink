@@ -14,7 +14,7 @@
 
 | Date | Version | Description | Auteur |
 |------|---------|-------------|--------|
-| 26.03.2026 | 0.1 | Création initiale du concept de test | [Nom] |
+| 26.03.2026 | 0.1 | Création initiale du concept de test | Mostoslavski David |
 
 ---
 
@@ -77,7 +77,7 @@ Les principales fonctionnalités d'Uplink sont :
 
 ### 2.2 Architecture technique
 
-Le projet est organisé en un workspace Rust composé de plusieurs crates :
+Le projet est organisé en un workspace Rust composé de plusieurs crates (libraries ou packages) :
 
 | Crate | Rôle |
 |---|---|

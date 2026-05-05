@@ -342,88 +342,610 @@ pub fn is_only_emojis(input: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-
-    /// Utilise l'entiereté le module supérieur, dans ce cas là, c'est
-    /// ce fichier-ci en entier. (mod.rs en Rust est la façon dont
-    /// on déclare un module, similaire aux `namespace` en C++)
     use super::*;
 
-    // --- replace_append (via wrap_links_with_a_tags) ---
+    // ============ wrap_links_with_a_tags tests ============
 
-    /// Un lien simple http doit être enveloppé dans une balise <a>.
     #[test]
     fn link_replacer_wraps_http_url() {
         let text = "visit https://example.com please";
         let (html, links) = wrap_links_with_a_tags(text);
-
         assert!(html.contains("<a href=\"https://example.com\">https://example.com</a>"));
         assert_eq!(links, vec!["https://example.com"]);
     }
 
     #[test]
-    fn link_replacer_does_reconize_tld_other_than_dot_com() {
+    fn link_replacer_wraps_https_url() {
+        let text = "Check https://secure.example.org out";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(
+            html.contains("<a href=\"https://secure.example.org\">https://secure.example.org</a>")
+        );
+        assert_eq!(links, vec!["https://secure.example.org"]);
+    }
+
+    #[test]
+    fn link_replacer_recognizes_tld_other_than_com() {
         let text = "visit https://example.faketld please";
         let (html, links) = wrap_links_with_a_tags(text);
-
         assert!(html.contains("<a href=\"https://example.faketld\">https://example.faketld</a>"));
         assert_eq!(links, vec!["https://example.faketld"]);
     }
 
-    /// Un lien www. sans schéma doit recevoir le préfixe https://.
     #[test]
     fn link_replacer_adds_https_to_www() {
-        let text = "Dépéche toi d'aller à www.example.com MAINTENANT";
+        let text = "Go to www.example.com now";
         let (html, links) = wrap_links_with_a_tags(text);
-
         assert!(html.contains("<a href=\"https://www.example.com\">www.example.com</a>"));
         assert_eq!(links, vec!["https://www.example.com"]);
     }
 
-    /// Un texte sans lien ne doit pas être modifié.
+    #[test]
+    fn link_replacer_handles_multiple_urls() {
+        let text = "Visit https://example1.com and www.example2.org";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("https://example1.com"));
+        assert!(html.contains("https://www.example2.org"));
+        assert_eq!(links.len(), 2);
+    }
+
+    #[test]
+    fn link_replacer_handles_mailto_links() {
+        let text = "Email me at mailto: user@example.com";
+        let (html, _links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("<a href=\"mailto: user@example.com\">user@example.com</a>"));
+    }
+
     #[test]
     fn link_replacer_no_link_unchanged() {
-        let text = "Pas d'url dans ce message";
+        let text = "No url in this message";
         let (html, links) = wrap_links_with_a_tags(text);
-
         assert_eq!(html, text);
         assert!(links.is_empty());
     }
 
-    /// Un texte sans .com
     #[test]
-    fn link_replacer_no_com_unchanged() {
-        let text = "texte ennuyant du pote qu'on voit jamais";
+    fn link_replacer_with_url_containing_path() {
+        let text = "Check https://example.com/path/to/page";
         let (html, links) = wrap_links_with_a_tags(text);
-
-        assert_eq!(html, text);
-        assert!(links.is_empty());
+        assert!(html.contains("https://example.com/path/to/page"));
+        assert_eq!(links, vec!["https://example.com/path/to/page"]);
     }
 
-    /// Le regex ne détecte pas les domaines nus sans préfixe
-    /// Seuls les URLs avec "www." ou "http(s)://" sont reconnus.
     #[test]
-    fn link_replacer_with_no_domain_not_detected() {
-        let text = "Regardez mon super site !  example.com";
+    fn link_replacer_with_url_containing_parentheses() {
+        let text = "See (https://example.com/page)";
         let (html, links) = wrap_links_with_a_tags(text);
-
-        // Comportement attendu : aucun lien détecté, texte inchangé
-        assert_eq!(html, text);
-        assert!(links.is_empty());
+        assert!(html.contains("<a href"));
+        assert!(!links.is_empty());
     }
 
-    /// Le texte normal n'est pas modifié
+    // ============ replace_emojis tests ============
+
+    #[test]
+    fn replace_emojis_smiley() {
+        let result = replace_emojis("Hello :) friend");
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn replace_emojis_sad_face() {
+        let result = replace_emojis("I'm sad :(");
+        assert!(result.contains("🙁"));
+    }
+
+    #[test]
+    fn replace_emojis_wink() {
+        let result = replace_emojis("Just kidding ;)");
+        assert!(result.contains("😉"));
+    }
+
+    #[test]
+    fn replace_emojis_big_smile() {
+        let result = replace_emojis("Very happy :D");
+        assert!(result.contains("😁"));
+    }
+
+    #[test]
+    fn replace_emojis_evil_smile() {
+        let result = replace_emojis(">:) muahahaha");
+        assert!(result.contains("😈"));
+    }
+
+    #[test]
+    fn replace_emojis_heart() {
+        let result = replace_emojis("I love you <3");
+        assert!(result.contains("❤️"));
+    }
+
+    #[test]
+    fn replace_emojis_no_emoji() {
+        let result = replace_emojis("Plain text");
+        assert_eq!(result, "Plain text");
+    }
+
+    #[test]
+    fn replace_emojis_multiple() {
+        let result = replace_emojis(":) and ;) but :(");
+        assert!(result.contains("🙂"));
+        assert!(result.contains("😉"));
+        assert!(result.contains("🙁"));
+    }
+
+    #[test]
+    fn replace_emojis_neutral_face() {
+        let result = replace_emojis("I'm neutral :/");
+        assert!(result.contains("🫤"));
+    }
+
+    #[test]
+    fn replace_emojis_tongue_out() {
+        let result = replace_emojis("Silly :p");
+        assert!(result.contains("😛"));
+    }
+
+    #[test]
+    fn replace_emojis_xd() {
+        let result = replace_emojis("Very funny xD");
+        assert!(result.contains("😆"));
+    }
+
+    #[test]
+    fn replace_emojis_evil_face_variant() {
+        let result = replace_emojis("Evil >:(");
+        assert!(result.contains("😠"));
+    }
+
+    #[test]
+    fn replace_emojis_expressionless() {
+        let result = replace_emojis("Nothing to say :|");
+        assert!(result.contains("😐"));
+    }
+
+    #[test]
+    fn replace_emojis_surprised() {
+        let result = replace_emojis("What :O");
+        assert!(result.contains("😮"));
+    }
+
+    // ============ is_only_emojis tests ============
+
+    #[test]
+    fn is_only_emojis_single_emoji() {
+        assert!(is_only_emojis("😀"));
+    }
+
+    #[test]
+    fn is_only_emojis_multiple_emojis() {
+        assert!(is_only_emojis("😀😁😂"));
+    }
+
+    #[test]
+    fn is_only_emojis_with_whitespace() {
+        assert!(is_only_emojis("  😀 😁  "));
+    }
+
+    #[test]
+    fn is_only_emojis_text_and_emoji() {
+        assert!(!is_only_emojis("Hello 😀"));
+    }
+
+    #[test]
+    fn is_only_emojis_empty_string() {
+        assert!(is_only_emojis(""));
+    }
+
+    #[test]
+    fn is_only_emojis_plain_text() {
+        assert!(!is_only_emojis("hello world"));
+    }
+
+    #[test]
+    fn is_only_emojis_emoji_with_zwj() {
+        assert!(is_only_emojis("👨‍👩‍👧‍👦"));
+    }
+
+    #[test]
+    fn is_only_emojis_with_special_chars() {
+        assert!(!is_only_emojis("😀!@#"));
+    }
+
+    // ============ process_string tests ============
+
+    #[test]
+    fn process_string_basic() {
+        let result = process_string("hello world", |s| s);
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn process_string_empty() {
+        let result = process_string("", |s| s);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn process_string_single_word() {
+        let result = process_string("hello", |s| s);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn process_string_with_callback() {
+        let result = process_string("a b c", |s| if s == "b" { "B" } else { s });
+        assert!(result.contains("B"));
+    }
+
+    #[test]
+    fn process_string_with_special_characters() {
+        let result = process_string("hello@world#test", |s| s);
+        assert!(result.contains("@"));
+        assert!(result.contains("#"));
+    }
+
+    // ============ stack_processor tests ============
+
+    #[test]
+    fn stack_processor_emoji_smiley() {
+        let result = stack_processor(":)", false, true);
+        assert_eq!(result, "🙂");
+    }
+
+    #[test]
+    fn stack_processor_emoji_heart() {
+        let result = stack_processor("<3", false, true);
+        assert_eq!(result, "❤️");
+    }
+
+    #[test]
+    fn stack_processor_no_emoji_mode() {
+        let result = stack_processor(":)", false, false);
+        assert_eq!(result, ":)");
+    }
+
+    #[test]
+    fn stack_processor_unescape_html() {
+        let result = stack_processor("&amp;", true, false);
+        assert_eq!(result, "&");
+    }
+
+    #[test]
+    fn stack_processor_unescape_nbsp() {
+        let result = stack_processor("&nbsp;", true, false);
+        assert_eq!(result, " ");
+    }
+
+    #[test]
+    fn stack_processor_unknown_input() {
+        let result = stack_processor("xyz", false, true);
+        assert_eq!(result, "xyz");
+    }
+
+    #[test]
+    fn stack_processor_evil_face() {
+        let result = stack_processor(">:(", false, true);
+        assert_eq!(result, "😠");
+    }
+
+    #[test]
+    fn stack_processor_tongue_wink() {
+        let result = stack_processor(";p", false, true);
+        assert_eq!(result, "😜");
+    }
+
+    #[test]
+    fn stack_processor_neutral() {
+        let result = stack_processor(":/", false, true);
+        assert_eq!(result, "🫤");
+    }
+
+    #[test]
+    fn stack_processor_expressionless() {
+        let result = stack_processor(":|", false, true);
+        assert_eq!(result, "😐");
+    }
+
+    #[test]
+    fn stack_processor_surprised() {
+        let result = stack_processor(":O", false, true);
+        assert_eq!(result, "😮");
+    }
+
+    // ============ markdown tests ============
+
+    #[test]
+    fn markdown_plain_text() {
+        let result = markdown("hello world", false);
+        assert!(result.contains("hello world"));
+    }
+
+    #[test]
+    fn markdown_with_emojis() {
+        let result = markdown("hello :)", true);
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn markdown_bold() {
+        let result = markdown("**bold text**", false);
+        assert!(result.contains("<strong>"));
+    }
+
+    #[test]
+    fn markdown_italic() {
+        let result = markdown("*italic text*", false);
+        assert!(result.contains("<em>"));
+    }
+
+    #[test]
+    fn markdown_strikethrough() {
+        let result = markdown("~~strikethrough~~", false);
+        assert!(result.contains("<del>"));
+    }
+
+    #[test]
+    fn markdown_code_inline() {
+        let result = markdown("`code`", false);
+        assert!(result.contains("<code>"));
+    }
+
+    #[test]
+    fn markdown_empty_string() {
+        let result = markdown("", false);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn markdown_with_newlines() {
+        let result = markdown("line1\nline2", false);
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+    }
+
+    #[test]
+    fn markdown_only_emojis() {
+        let result = markdown("😀😁", true);
+        assert!(result.contains("big-emoji"));
+    }
+
+    #[test]
+    fn markdown_ignores_links() {
+        let result = markdown("[link](https://example.com)", false);
+        assert!(!result.contains("href"));
+    }
+
+    #[test]
+    fn markdown_with_special_characters() {
+        let result = markdown("Text with &, <, > chars", false);
+        assert!(result.contains("&amp;"));
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&gt;"));
+    }
+
+    #[test]
+    fn markdown_with_list() {
+        let result = markdown("- item 1\n- item 2", false);
+        assert!(result.contains("<li>"));
+    }
+
+    #[test]
+    fn markdown_code_block() {
+        let result = markdown("```\ncode block\n```", false);
+        assert!(result.contains("code"));
+    }
+
+    // ============ format_text tests ============
+
     #[test]
     fn format_text_plain_no_markdown_no_emoji() {
         let result = format_text("hello world", false, false, None);
         assert_eq!(result, "<p>hello world</p>");
     }
 
-    // #[test]
-    // fn format_text_plain_no_markdown_no_emoji() {
-    //     let should_markdown = true;
-    //     let emojis = false;
-    //
-    //     let result = format_text("hello world", should_markdown, emojis, None);
-    //     assert_eq!(result, "<p>hello world</p>");
-    // }
+    #[test]
+    fn format_text_with_markdown_enabled() {
+        let result = format_text("**bold**", true, false, None);
+        assert!(result.contains("<strong>"));
+    }
+
+    #[test]
+    fn format_text_with_emoji_enabled() {
+        let result = format_text("hello :)", false, true, None);
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_with_markdown_and_emoji() {
+        let result = format_text("**hello** :)", true, true, None);
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_empty_string() {
+        let result = format_text("", false, false, None);
+        assert!(result.contains("<p>"));
+    }
+
+    #[test]
+    fn format_text_html_escape_ampersand() {
+        let result = format_text("Tom & Jerry", false, false, None);
+        assert!(result.contains("&amp;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_less_than() {
+        let result = format_text("5 < 10", false, false, None);
+        assert!(result.contains("&lt;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_greater_than() {
+        let result = format_text("10 > 5", false, false, None);
+        assert!(result.contains("&gt;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_quote() {
+        let result = format_text("He said \"hi\"", false, false, None);
+        assert!(result.contains("&quot;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_apostrophe() {
+        let result = format_text("Don't", false, false, None);
+        assert!(result.contains("&#x27;"));
+    }
+
+    #[test]
+    fn format_text_only_emojis() {
+        let result = format_text("😀", false, true, None);
+        assert!(result.contains("big-emoji"));
+    }
+
+    #[test]
+    fn format_text_preserves_newlines_as_nbsp() {
+        let result = format_text("line1\nline2", false, false, None);
+        assert!(result.contains("&nbsp;&nbsp;"));
+    }
+
+    #[test]
+    fn format_text_markdown_disabled_emoji_enabled() {
+        let result = format_text("**not bold** :)", false, true, None);
+        assert!(!result.contains("<strong>"));
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_markdown_enabled_emoji_disabled() {
+        let result = format_text("**bold** :)", true, false, None);
+        assert!(result.contains("<strong>"));
+        assert!(!result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_xss_prevention() {
+        let result = format_text("<script>alert('xss')</script>", false, false, None);
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&gt;"));
+        assert!(!result.contains("<script>"));
+    }
+
+    // ============ Order enum tests ============
+
+    #[test]
+    fn order_first_display() {
+        let order = Order::First;
+        assert_eq!(order.to_string(), "message-first");
+    }
+
+    #[test]
+    fn order_middle_display() {
+        let order = Order::Middle;
+        assert_eq!(order.to_string(), "message-middle");
+    }
+
+    #[test]
+    fn order_last_display() {
+        let order = Order::Last;
+        assert_eq!(order.to_string(), "message-last");
+    }
+
+    // ============ ReactionAdapter tests ============
+
+    #[test]
+    fn reaction_adapter_creation() {
+        let reaction = ReactionAdapter {
+            emoji: "😀".to_string(),
+            alt: "grinning".to_string(),
+            self_reacted: true,
+            reaction_count: 5,
+        };
+        assert_eq!(reaction.emoji, "😀");
+        assert_eq!(reaction.reaction_count, 5);
+        assert!(reaction.self_reacted);
+    }
+
+    // ============ HTML_ESCAPES tests ============
+
+    #[test]
+    fn html_escapes_ampersand() {
+        let (from, to) = HTML_ESCAPES[0];
+        assert_eq!(from, "&");
+        assert_eq!(to, "&amp;");
+    }
+
+    #[test]
+    fn html_escapes_less_than() {
+        let (from, to) = HTML_ESCAPES[1];
+        assert_eq!(from, "<");
+        assert_eq!(to, "&lt;");
+    }
+
+    #[test]
+    fn html_escapes_greater_than() {
+        let (from, to) = HTML_ESCAPES[2];
+        assert_eq!(from, ">");
+        assert_eq!(to, "&gt;");
+    }
+
+    #[test]
+    fn html_escapes_quote() {
+        let (from, to) = HTML_ESCAPES[3];
+        assert_eq!(from, "\"");
+        assert_eq!(to, "&quot;");
+    }
+
+    #[test]
+    fn html_escapes_apostrophe() {
+        let (from, to) = HTML_ESCAPES[4];
+        assert_eq!(from, "'");
+        assert_eq!(to, "&#x27;");
+    }
+
+    // ============ Integration tests ============
+
+    #[test]
+    fn integration_markdown_with_links_and_emojis() {
+        let text = "Check **this** link: https://example.com :)";
+        let result = format_text(text, true, true, None);
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("https://example.com"));
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn integration_html_escape_then_markdown() {
+        let text = "This <script> tag & markdown **bold**";
+        let result = format_text(text, true, false, None);
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&amp;"));
+        assert!(result.contains("<strong>"));
+    }
+
+    #[test]
+    fn integration_only_emojis_detection() {
+        let text = "😀😁😂";
+        let result = format_text(text, false, true, None);
+        assert!(result.contains("big-emoji"));
+    }
+
+    #[test]
+    fn integration_mixed_emojis_text() {
+        let text = "Hello :) world";
+        let result = format_text(text, false, true, None);
+        assert!(result.contains("Hello"));
+        assert!(result.contains("🙂"));
+        assert!(result.contains("world"));
+    }
+
+    #[test]
+    fn integration_complex_markdown() {
+        let text = "**bold** *italic* ~~strikethrough~~ `code`";
+        let result = format_text(text, true, false, None);
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("<em>"));
+        assert!(result.contains("<del>"));
+        assert!(result.contains("<code>"));
+    }
 }

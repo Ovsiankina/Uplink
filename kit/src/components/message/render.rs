@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::{collections::HashSet, str::FromStr};
 
+use arboard::Clipboard;
 use common::language::{get_local_text, get_local_text_with_args};
 use common::state::pending_message::{FileLocation, FileProgression};
 use common::state::{Action, Identity, State, ToastNotification};
 use common::warp_runner::{thumbnail_to_base64, MultiPassCmd, WarpCmd};
 use common::{state::pending_message::progress_file, WARP_CMD_CH};
-use arboard::Clipboard;
 use derive_more::Display;
 use dioxus::prelude::*;
 use futures::StreamExt;
