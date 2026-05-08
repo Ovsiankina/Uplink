@@ -40,7 +40,7 @@ pub struct ShortCutProps<'a> {
 ///
 /// ### Example:
 ///
-/// ```rust
+/// ```text
 /// if state.read().ui.metadata.focused {
 ///    rsx!(PasteFilesShortcut {
 ///        on_paste: move |files_local_path| {

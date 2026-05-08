@@ -16,7 +16,7 @@ pub const MIN_USERNAME_LEN: i32 = 4;
 pub const MAX_USERNAME_LEN: i32 = 32;
 
 #[component]
-pub fn Layout(cx: Scope, page: UseState<AuthPages>, user_name: UseRef<String>) -> Element {
+pub fn Layout(cx: Scope, page: UseState<AuthPages>, user_name: UseRef<String>) -> Element<'a> {
     log::trace!("rendering enter username layout");
     let window = use_window(cx);
 

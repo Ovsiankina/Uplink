@@ -164,7 +164,7 @@ pub fn Compose(cx: Scope) -> Element {
             //     },
             // ))),
         show_manage_members
-            .map_or(false, |group_chat_id| (group_chat_id == chat_id)).then(|| rsx!(
+            .map_or(false, |group_chat_id| group_chat_id == chat_id ).then(|| rsx!(
                 Modal {
                     open: show_manage_members.is_some(),
                     transparent: true,
@@ -189,7 +189,7 @@ pub fn Compose(cx: Scope) -> Element {
                 }
             )),
         show_group_users
-            .map_or(false, |group_chat_id| (group_chat_id == chat_id)).then(|| rsx!(
+            .map_or(false, |group_chat_id| group_chat_id == chat_id ).then(|| rsx!(
                 Modal {
                     open: show_group_users.is_some(),
                     right: "calc(100% - (var(--width-sidebar) * 2 ) - var(--padding-more))",

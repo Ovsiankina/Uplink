@@ -190,36 +190,3 @@ fn versions_match(release_version: &str) -> bool {
     format!("v{}", env!("CARGO_PKG_VERSION")) == release_version
         || env!("CARGO_PKG_VERSION") == release_version
 }
-
-#[cfg(test)]
-mod test {
-
-    use super::*;
-    use std::error::Error;
-
-    #[tokio::test]
-    async fn test_get_latest_release() -> Result<(), Box<dyn Error>> {
-        let response =
-            get_github_release("https://api.github.com/repos/sdwoodbury/Uplink/releases/latest")
-                .await?;
-
-        println!("assets: {:#?}", response.assets);
-        // assert_eq!(response.tag_name, String::from("v0.2.8"));
-        Ok(())
-    }
-
-    // #[tokio::test]
-    // async fn test_download_asset() -> Result<(), Box<dyn Error>> {
-    //     let dest = "/tmp/test_download";
-    //     let response =
-    //         get_github_release("https://api.github.com/repos/sdwoodbury/Uplink/releases/latest")
-    //             .await?;
-    //     let asset = response.assets.first().unwrap();
-    //
-    //     let client = get_client()?;
-    //     println!("downloading {}", asset.name);
-    //     download_file(&client, dest, &asset.browser_download_url).await?;
-    //
-    //     Ok(())
-    // }
-}

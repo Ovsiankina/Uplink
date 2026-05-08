@@ -1,34 +1,17 @@
 use std::borrow::Cow;
-use std::path::PathBuf;
-use std::{collections::HashSet, str::FromStr};
 
-use common::language::{get_local_text, get_local_text_with_args};
-use common::state::pending_message::{FileLocation, FileProgression};
 use common::state::utils::{mention_replacement_pattern, parse_mentions};
-use common::state::{Action, Identity, State, ToastNotification};
-use common::warp_runner::{thumbnail_to_base64, MultiPassCmd, WarpCmd};
-use common::{state::pending_message::progress_file, WARP_CMD_CH};
-//use common::icons::outline::Shape as Icon;
-use arboard::Clipboard;
+use common::state::State;
 use derive_more::Display;
-use dioxus::prelude::*;
-use futures::StreamExt;
 use once_cell::sync::Lazy;
 use pulldown_cmark::{CodeBlockKind, Options, Tag, TagEnd};
 use regex::{Captures, Regex, Replacer};
 use uuid::Uuid;
-use warp::error::Error;
-use warp::{constellation::file::File, crypto::DID};
 
-use tracing::log;
-
-use common::icons::outline::Shape as Icon;
-
-use crate::components::context_menu::{ContextItem, ContextMenu, IdentityHeader};
-use crate::elements::button::Button;
-use crate::{components::embeds::file_embed::FileEmbed, elements::textarea};
-
-use super::embeds::link_embed::EmbedLinks;
+pub mod render;
+pub use render::{
+    ChatMessageProps, ChatText, IdentityCmd, IdentityMessage, IdentityMessageProps, Message, Props,
+};
 
 pub static MARKDOWN_PROCESSOR_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new("(^|\n)((?:&gt;(?: *&gt;)*)|(?: ))").unwrap());
@@ -36,7 +19,7 @@ pub static LINK_TAGS_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"((?:(?:www\.)|(?:https?:\/\/))[\w-]+(?:\.[\w-]+)+(?:\/[^)\s<]*)*)|((mailto: {0,1})([\w.+-]+@[\w-]+(?:\.[\w.-]+)+))").unwrap()
 });
 
-const HTML_ESCAPES: [(&str, &str); 5] = [
+pub(crate) const HTML_ESCAPES: [(&str, &str); 5] = [
     ("&", "&amp;"),
     ("<", "&lt;"),
     (">", "&gt;"),
@@ -62,69 +45,6 @@ pub struct ReactionAdapter {
     pub alt: String,
     pub self_reacted: bool,
     pub reaction_count: usize,
-}
-
-#[derive(Props)]
-pub struct Props<'a> {
-    // Message ID
-    id: String,
-    // indicates that the message is being edited
-    editing: bool,
-
-    // An optional field that, if set to true, will add a CSS class of "loading" to the div element.
-    loading: Option<bool>,
-
-    // An optional field that, if set, will be used as the content of a nested div element with a class of "content".
-    with_content: Option<Element<'a>>,
-
-    // An optional field that, if set, will be used as the text content of a nested p element with a class of "text".
-    with_text: Option<String>,
-
-    reactions: Vec<ReactionAdapter>,
-
-    // An optional field that, if set to true, will add a CSS class of "remote" to the div element.
-    remote: Option<bool>,
-
-    // An optional field that, if set, will be used to determine the ordering of the div element relative to other Message elements.
-    // The value will be converted to a string using the Order enum's fmt::Display implementation and used as a CSS class of the div element.
-    // If not set, the default value of Order::Last will be used.
-    order: Option<Order>,
-
-    // available for download
-    attachments: Option<Vec<File>>,
-
-    // attachments which are being downloaded
-    #[props(!optional)]
-    attachments_pending_download: Option<HashSet<File>>,
-
-    /// called when an attachment is downloaded
-    on_download: EventHandler<'a, (File, Option<PathBuf>)>,
-
-    /// called when editing is completed
-    on_edit: EventHandler<'a, String>,
-
-    /// If true, the markdown parser will be rendered
-    parse_markdown: bool,
-    transform_ascii_emojis: bool,
-    // called when a reaction is clicked
-    on_click_reaction: EventHandler<'a, String>,
-
-    // Indicates whether this message is pending to be uploaded or not
-    pending: bool,
-
-    // Progress for attachments which are being uploaded
-    #[props(!optional)]
-    attachments_pending_uploads: Option<&'a Vec<(FileLocation, FileProgression)>>,
-    on_resend: Option<EventHandler<'a, (Option<String>, FileLocation)>>,
-    on_delete: Option<EventHandler<'a, FileLocation>>,
-
-    pinned: bool,
-
-    is_mention: bool,
-
-    state: &'a UseSharedState<State>,
-
-    chat: Uuid,
 }
 
 // Struct for replacing links with clickable divs.
@@ -166,313 +86,12 @@ impl Replacer for LinkReplacer {
     }
 }
 
-fn wrap_links_with_a_tags(text: &str) -> (String, Vec<String>) {
+pub(crate) fn wrap_links_with_a_tags(text: &str) -> (String, Vec<String>) {
     let mut links = LinkReplacer(vec![]);
     let res = LINK_TAGS_REGEX
         .replace_all(text, links.by_ref())
         .into_owned();
     (res, links.0)
-}
-
-#[allow(non_snake_case)]
-pub fn Message<'a>(cx: Scope<'a, Props<'a>>) -> Element<'a> {
-    //  log::trace!("render Message");
-    let loading = cx.props.loading.unwrap_or_default();
-    let is_remote = cx.props.remote.unwrap_or_default();
-    let order = cx.props.order.unwrap_or(Order::Last);
-
-    // note: the class "remote" will display the reaction at flex-start, which starts at the bottom left corner of the message.
-    // omitting the class will display the reactions starting from the bottom right corner
-    let remote_class = ""; //if is_remote { "remote" } else { "" };
-    let reactions_class = format!("message-reactions-container {remote_class}");
-
-    let has_attachments = cx
-        .props
-        .attachments
-        .as_ref()
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-
-    // todo: pick an icon based on the file extension
-    // there's some weirdness here to avoid more nesting. this should make the code easier to read overall
-    let attachment_list = cx.props.attachments.as_ref().map(|vec| {
-        vec.iter().map(|file| {
-            let key = file.id();
-            rsx!(FileEmbed {
-                key: "{key}",
-                filename: file.name(),
-                filesize: file.size(),
-                thumbnail: thumbnail_to_base64(file),
-                big: true,
-                remote: is_remote,
-                with_download_button: true,
-                download_pending: cx
-                    .props
-                    .attachments_pending_download
-                    .as_ref()
-                    .map(|x| x.contains(file))
-                    .unwrap_or(false),
-                on_press: move |temp_dir_option| cx
-                    .props
-                    .on_download
-                    .call((file.clone(), temp_dir_option)),
-            })
-        })
-    });
-
-    let single = cx
-        .props
-        .attachments_pending_uploads
-        .map(|v| v.len() < 2)
-        .unwrap_or_default();
-
-    let pending_attachment_list = cx.props.attachments_pending_uploads.as_ref().map(|vec| {
-        vec.iter().map(|(location, prog)| {
-            let file = progress_file(prog);
-            rsx!(FileEmbed {
-                key: "{file}",
-                filename: file,
-                remote: is_remote,
-                download_pending: false,
-                with_download_button: false,
-                progress: prog,
-                on_press: move |_| {},
-                on_resend_msg: move |_| {
-                    if single {
-                        if let Some(e) = &cx.props.on_resend {
-                            e.call((cx.props.with_text.clone(), location.clone()))
-                        }
-                    } else {
-                        if let Some(e) = &cx.props.on_delete {
-                            e.call(location.clone())
-                        }
-                        if let Some(e) = &cx.props.on_resend {
-                            e.call((None, location.clone()))
-                        }
-                    }
-                },
-                on_delete_msg: move |_| {
-                    if let Some(e) = &cx.props.on_delete {
-                        e.call(location.clone())
-                    }
-                },
-            })
-        })
-    });
-
-    let loading_class = loading.then_some("loading").unwrap_or_default();
-    let remote_class = is_remote.then_some("remote").unwrap_or_default();
-    let mention_class = cx.props.is_mention.then_some("mention").unwrap_or_default();
-    let order_class = order.to_string();
-    let msg_pending_class = cx
-        .props
-        .pending
-        .then_some("message-pending")
-        .unwrap_or_default();
-    let is_editing = cx.props.with_text.is_some() && cx.props.editing;
-
-    cx.render(rsx! (
-        cx.props.pinned.then(|| {
-            rsx!(div {
-                class: "pin-indicator",
-                aria_label: "pin-indicator",
-                common::icons::Icon {
-                    ..common::icons::IconProps {
-                        class: None,
-                        size: 14,
-                        fill:"currentColor",
-                        icon: Icon::Pin,
-                        disabled: false,
-                        disabled_fill: "#9CA3AF"
-                    },
-                },
-            })
-        }),
-        is_editing.then(||
-            rsx! (
-                div {
-                    class: "edit-message-wrap",
-                    onclick: move |_| {
-                        cx.props.on_edit.call(cx.props.with_text.clone().unwrap_or_default());
-                    }
-                },
-            )
-        ),
-        div {
-            class: {
-                format_args!(
-                    "message {} {} {} {} {} {}",
-                   loading_class, remote_class, order_class, msg_pending_class, mention_class, if is_editing { "edit-message" } else { "" }
-                )
-            },
-            aria_label: {
-                format_args!(
-                    "message-{}",
-                    if is_remote {
-                        "remote"
-                    } else { "local" },
-                )
-            },
-            white_space: "pre-wrap",
-            (cx.props.with_content.is_some()).then(|| rsx! (
-                    div {
-                    class: "content",
-                    cx.props.with_content.as_ref(),
-                },
-            )),
-            is_editing.then(||
-                rsx! (
-                    p {
-                        class: "text",
-                        aria_label: "message-text",
-                        rsx! (
-                            EditMsg {
-                                id: cx.props.id.clone(),
-                                text: cx.props.with_text.clone().unwrap_or_default(),
-                                on_enter: move |update| {
-                                    cx.props.on_edit.call(update);
-                                }
-                            }
-                        )
-                    }
-                )
-            ),
-            (cx.props.with_text.is_some() && !cx.props.editing).then(|| rsx!(
-                ChatText {
-                    text: cx.props.with_text.as_ref().cloned().unwrap_or_default(),
-                    remote: is_remote,
-                    pending: cx.props.pending,
-                    markdown: cx.props.parse_markdown,
-                    state: cx.props.state,
-                    chat: cx.props.chat,
-                    ascii_emoji: cx.props.transform_ascii_emojis,
-                }
-            )),
-            has_attachments.then(|| {
-                rsx!(
-                    div {
-                        class: "attachment-list",
-                        attachment_list.map(|list| {
-                            rsx!( list )
-                        })
-                    }
-                )
-            })
-            pending_attachment_list.map(|node| {
-                rsx!(node)
-            })
-        },
-        div {
-            class: "{reactions_class}",
-            aria_label: "message-reactions-container",
-            cx.props.reactions.iter().map(|reaction| {
-                let reaction_count = reaction.reaction_count;
-                let emoji = &reaction.emoji;
-                let alt = &reaction.alt;
-
-                rsx!(
-                    div {
-                         alt: "{alt}",
-                        class:
-                            format_args!("emoji-reaction {}", if reaction.self_reacted {
-                            "emoji-reaction-self"
-                        } else { "" }),
-                        aria_label: {
-                            format_args!(
-                                "emoji-reaction-{}",
-                                if reaction.self_reacted {
-                                    "self"
-                                } else { "remote" }
-                            )
-                        },
-                        onclick: move |_| {
-                            cx.props.on_click_reaction.call(emoji.clone());
-                        },
-                        "{emoji} {reaction_count}"
-                    }
-                )
-            })
-        }
-    ))
-}
-
-#[derive(Props)]
-struct EditProps<'a> {
-    id: String,
-    text: String,
-    on_enter: EventHandler<'a, String>,
-}
-
-#[allow(non_snake_case)]
-fn EditMsg<'a>(cx: Scope<'a, EditProps<'a>>) -> Element<'a> {
-    log::trace!("rendering EditMsg");
-
-    cx.render(rsx!(textarea::InputRich {
-        id: cx.props.id.clone(),
-        aria_label: "edit-message-input".into(),
-        ignore_focus: false,
-        value: cx.props.text.clone(),
-        onchange: move |_| {},
-        onreturn: move |(s, is_valid, _): (String, bool, _)| {
-            if is_valid && !s.is_empty() {
-                cx.props.on_enter.call(s);
-            } else {
-                cx.props.on_enter.call(cx.props.text.clone());
-            }
-        }
-    }))
-}
-
-#[derive(Props)]
-pub struct ChatMessageProps<'a> {
-    text: String,
-    remote: bool,
-    pending: bool,
-    markdown: bool,
-    ascii_emoji: bool,
-    state: &'a UseSharedState<State>,
-    chat: Uuid,
-}
-
-#[allow(non_snake_case)]
-pub fn ChatText<'a>(cx: Scope<'a, ChatMessageProps<'a>>) -> Element<'a> {
-    // DID::from_str panics if text is 'z'. simple fix is to ensure string is long enough.
-    if cx.props.text.len() > 2 {
-        if let Ok(id) = DID::from_str(&cx.props.text) {
-            return cx.render(rsx!(IdentityMessage { id: id }));
-        }
-    }
-
-    let formatted_text = format_text(
-        &cx.props.text,
-        cx.props.markdown,
-        cx.props.ascii_emoji,
-        Some((&cx.props.state.read(), &cx.props.chat, false)),
-    );
-    let (formatted_text, links) = wrap_links_with_a_tags(&formatted_text);
-
-    let text_type_class = if cx.props.pending {
-        "pending-text"
-    } else {
-        "text"
-    };
-
-    cx.render(rsx!(
-        div {
-            class: text_type_class,
-            p {
-                class: text_type_class,
-                aria_label: "message-text-{cx.props.text}",
-                dangerous_inner_html: "{formatted_text}",
-            },
-            links.first().and_then(|l| cx.render(rsx!(
-                EmbedLinks {
-                    link: l.to_string(),
-                    remote: cx.props.remote
-                })
-            ))
-        }
-    ))
 }
 
 pub fn format_text(
@@ -513,7 +132,7 @@ pub fn format_text(
     }
 }
 
-fn stack_processor(stack: &str, unescape_html: bool, emojis: bool) -> &str {
+pub(crate) fn stack_processor(stack: &str, unescape_html: bool, emojis: bool) -> &str {
     if unescape_html {
         if let Some((esc, _)) = HTML_ESCAPES.iter().find(|(_, s)| stack.eq(*s)) {
             return esc;
@@ -583,7 +202,7 @@ impl Replacer for RegexReplacer {
     }
 }
 
-fn markdown(text: &str, emojis: bool) -> String {
+pub(crate) fn markdown(text: &str, emojis: bool) -> String {
     let txt = text.trim();
     if emojis {
         let r = replace_emojis(txt);
@@ -697,259 +316,12 @@ fn markdown(text: &str, emojis: bool) -> String {
     html_output
 }
 
-#[derive(Display)]
-pub enum IdentityCmd {
-    #[display(fmt = "GetIdentity")]
-    GetIdentity(DID),
-    #[display(fmt = "SentFriendRequest")]
-    SentFriendRequest(String, Vec<Identity>),
-}
-
-#[derive(Props, PartialEq)]
-pub struct IdentityMessageProps {
-    id: DID,
-}
-
-#[allow(non_snake_case)]
-pub fn IdentityMessage(cx: Scope<IdentityMessageProps>) -> Element {
-    let state = use_shared_state::<State>(cx)?;
-    let identity = use_state(cx, || None);
-    let ch = use_coroutine(cx, |mut rx: UnboundedReceiver<IdentityCmd>| {
-        to_owned![identity, state];
-        async move {
-            let warp_cmd_tx = WARP_CMD_CH.tx.clone();
-            while let Some(cmd) = rx.next().await {
-                match cmd {
-                    IdentityCmd::GetIdentity(id) => {
-                        let (tx, rx) = futures::channel::oneshot::channel();
-                        let _ = warp_cmd_tx.send(WarpCmd::MultiPass(MultiPassCmd::GetIdentity {
-                            did: id,
-                            rsp: tx,
-                        }));
-                        let r = rx.await.expect("no identity found");
-                        if let Ok(id) = r {
-                            identity.set(Some(id));
-                        }
-                    }
-                    IdentityCmd::SentFriendRequest(id, outgoing_requests) => {
-                        let (tx, rx) = futures::channel::oneshot::channel();
-                        let _ = warp_cmd_tx.send(WarpCmd::MultiPass(MultiPassCmd::RequestFriend {
-                            id,
-                            outgoing_requests,
-                            rsp: tx,
-                        }));
-                        let res = rx.await.expect("failed to get response from warp_runner");
-                        match res {
-                            Ok(_) => {}
-                            Err(e) => match e {
-                                Error::PublicKeyIsBlocked => {
-                                    log::warn!("add friend failed: {}", e);
-                                    state.write().mutate(Action::AddToastNotification(
-                                        ToastNotification::init(
-                                            "".into(),
-                                            get_local_text("friends.key-blocked"),
-                                            None,
-                                            2,
-                                        ),
-                                    ));
-                                }
-                                _ => {
-                                    //The other errors are covered by button already
-                                    log::error!("add friend failed: {}", e);
-                                    state.write().mutate(Action::AddToastNotification(
-                                        ToastNotification::init(
-                                            "".into(),
-                                            get_local_text("friends.add-failed"),
-                                            None,
-                                            2,
-                                        ),
-                                    ));
-                                }
-                            },
-                        }
-                    }
-                }
-            }
-        }
-    });
-    use_effect(cx, &cx.props.id, |id| {
-        to_owned![ch];
-        async move {
-            ch.send(IdentityCmd::GetIdentity(id));
-        }
-    });
-    match identity.as_ref() {
-        Some(identity) => {
-            let disabled = state
-                .read()
-                .outgoing_fr_identities()
-                .iter()
-                .any(|req| req.did_key().eq(&identity.did_key()))
-                || state
-                    .read()
-                    .get_own_identity()
-                    .did_key()
-                    .eq(&identity.did_key())
-                || state
-                    .read()
-                    .friend_identities()
-                    .iter()
-                    .any(|req| req.did_key().eq(&identity.did_key()));
-
-            let short_id = identity.short_id();
-            let did_key = identity.did_key();
-            let username = identity.username();
-            let short_name = format!("{}#{}", username, short_id);
-            let random_uuid = Uuid::new_v4().to_string();
-
-            return cx.render(rsx!(
-                ContextMenu {
-                    key: "{short_id}-{random_uuid}",
-                    id: format!("{short_id}-{random_uuid}"),
-                    devmode: state.read().configuration.developer.developer_mode,
-                    items: cx.render(rsx!(
-                        ContextItem {
-                            icon: Icon::UserCircle,
-                            aria_label: "copy-user-id-from-user-identity-on-chat".into(),
-                            text: get_local_text("settings-profile.copy-id"),
-                            onpress: move |_| {
-                                match Clipboard::new() {
-                                    Ok(mut c) => {
-                                        if let Err(e) = c.set_text(short_name.clone()) {
-                                            log::warn!("Unable to set text to clipboard: {e}");
-                                        }
-                                    },
-                                    Err(e) => {
-                                        log::warn!("Unable to create clipboard reference: {e}");
-                                    }
-                                };
-                                state
-                                    .write()
-                                    .mutate(Action::AddToastNotification(ToastNotification::init(
-                                        "".into(),
-                                        get_local_text("friends.copied-did"),
-                                        None,
-                                        2,
-                                    )));
-                            }
-                        },
-                        ContextItem {
-                            icon: Icon::Key,
-                            aria_label: "copy-user-did-key-from-user-identity-on-chat".into(),
-                            disabled: false,
-                            text: get_local_text("settings-profile.copy-did"),
-                            onpress: move |_| {
-                                match Clipboard::new() {
-                                    Ok(mut c) => {
-                                        if let Err(e) = c.set_text(did_key.to_string()) {
-                                            log::warn!("Unable to set text to clipboard: {e}");
-                                        }
-                                    },
-                                    Err(e) => {
-                                        log::warn!("Unable to create clipboard reference: {e}");
-                                    }
-                                };
-                                state
-                                    .write()
-                                    .mutate(Action::AddToastNotification(ToastNotification::init(
-                                        "".into(),
-                                        get_local_text("friends.copied-did"),
-                                        None,
-                                        2,
-                                    )));
-                            },
-                            tooltip: None,
-                        }
-                    )),
-                   children: cx.render(rsx!(div { // TODO: This needs to be moved to kit/src/components/embeds/identity_embed/mod.rs.
-                        class: "embed-identity",
-                        IdentityHeader {
-                            sender_did: identity.did_key(),
-                            with_status: false,
-                        },
-                        div {
-                            class: "profile-container",
-                            div {
-                                id: "profile-name",
-                                aria_label: "profile-name",
-                                p {
-                                    class: "text",
-                                    aria_label: "profile-name-value",
-                                    format!("{}", identity.username())
-                                }
-                            }
-                            identity.status_message().and_then(|s|{
-                                cx.render(rsx!(
-                                    div {
-                                        id: "profile-status",
-                                        aria_label: "profile-status",
-                                        p {
-                                            class: "text",
-                                            aria_label: "profile-status-value",
-                                            s
-                                        }
-                                    }
-                                ))
-                            }),
-                        },
-                        Button {
-                            aria_label: String::from("embed-identity-button"),
-                            disabled: disabled,
-                            with_title: false,
-                            onpress: move |_| {
-                                ch.send(IdentityCmd::SentFriendRequest(identity.did_key().to_string(), state.read().outgoing_fr_identities()));
-                            },
-                            icon: if disabled {
-                                Icon::Check
-                            } else {
-                                Icon::Plus
-                            },
-                            text: if disabled {
-                                get_local_text("friends.already-friends")
-                            } else {
-                                get_local_text_with_args("friends.add-name", vec![("name", identity.username())])
-                            },
-                            appearance: crate::elements::Appearance::Primary
-                        }
-                    }))
-                }
-            ));
-        }
-        None => {
-            return cx.render(rsx!(div {
-                class: "embed-identity",
-                div {
-                    class: "profile-container empty-profile",
-                    div {
-                        class: "unknown-user",
-                        aria_label: "unknown-user",
-                        p {
-                            class: "text",
-                            aria_label: "unknown-user-value",
-                            get_local_text("messages.unknown-identity")
-                        }
-                    },
-                    div {
-                        id: "unknown-user-did",
-                        aria_label: "unknown-user-did",
-                        p {
-                            class: "text",
-                            aria_label: "unknown-user-did-value",
-                            cx.props.id.to_string()
-                        }
-                    }
-                }
-            }))
-        }
-    }
-}
-
 use unic_emoji_char::{
     is_emoji, is_emoji_component, is_emoji_modifier, is_emoji_modifier_base, is_emoji_presentation,
 };
 
-// matches strings conssisting of emojis and whitespace
-fn is_only_emojis(input: &str) -> bool {
+// matches strings consisting of emojis and whitespace
+pub fn is_only_emojis(input: &str) -> bool {
     let input = input.trim();
     if emojis::get(input).is_some() {
         return true;
@@ -969,117 +341,885 @@ fn is_only_emojis(input: &str) -> bool {
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn replace_emojis_test1() {
-        let input = ":)";
-        let expected = "🙂";
-        assert_eq!(&replace_emojis(input), expected);
-    }
-}
-
-#[cfg(test)]
-mod tests2 {
-    use super::*;
-
-    #[test]
-    fn test_format_text1() {
-        let input = ":) ";
-        let expected = "<span class=\"big-emoji\">🙂</span>";
-        assert_eq!(&format_text(input, true, true, None), expected);
-        assert_eq!(&format_text(input, false, true, None), expected);
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
-    // too lazy to change the unit tests
-    fn transform_only_emoji(input: &str) -> String {
-        if is_only_emojis(input) {
-            format!("<span class=\"single-emoji\">{}</span>", input.trim())
-        } else {
-            input.trim().to_string()
-        }
+    // ============ wrap_links_with_a_tags tests ============
+
+    #[test]
+    fn link_replacer_wraps_http_url() {
+        let text = "visit https://example.com please";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("<a href=\"https://example.com\">https://example.com</a>"));
+        assert_eq!(links, vec!["https://example.com"]);
     }
 
     #[test]
-    fn test_single_no_emoji() {
-        let input = "abc";
-        let expected = "abc";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_wraps_https_url() {
+        let text = "Check https://secure.example.org out";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(
+            html.contains("<a href=\"https://secure.example.org\">https://secure.example.org</a>")
+        );
+        assert_eq!(links, vec!["https://secure.example.org"]);
     }
 
     #[test]
-    fn test_single_emoji() {
-        let input = "😮";
-        let expected = "<span class=\"single-emoji\">😮</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_recognizes_tld_other_than_com() {
+        let text = "visit https://example.faketld please";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("<a href=\"https://example.faketld\">https://example.faketld</a>"));
+        assert_eq!(links, vec!["https://example.faketld"]);
     }
 
     #[test]
-    fn test_single_emoji2() {
-        let input = "😮  ";
-        let expected = "<span class=\"single-emoji\">😮</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_adds_https_to_www() {
+        let text = "Go to www.example.com now";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("<a href=\"https://www.example.com\">www.example.com</a>"));
+        assert_eq!(links, vec!["https://www.example.com"]);
     }
 
     #[test]
-    fn test_single_emoji3() {
-        let input = "👍🏾  ";
-        let expected = "<span class=\"single-emoji\">👍🏾</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_handles_multiple_urls() {
+        let text = "Visit https://example1.com and www.example2.org";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("https://example1.com"));
+        assert!(html.contains("https://www.example2.org"));
+        assert_eq!(links.len(), 2);
     }
 
     #[test]
-    fn test_single_emoji4() {
-        let input = "🙂";
-        let expected = "<span class=\"single-emoji\">🙂</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_handles_mailto_links() {
+        let text = "Email me at mailto: user@example.com";
+        let (html, _links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("<a href=\"mailto: user@example.com\">user@example.com</a>"));
     }
 
     #[test]
-    fn test_triple_emoji() {
-        let input = "😮😮👨‍👩‍👦‍👦";
-        let expected = "<span class=\"single-emoji\">😮😮👨‍👩‍👦‍👦</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_no_link_unchanged() {
+        let text = "No url in this message";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert_eq!(html, text);
+        assert!(links.is_empty());
     }
 
     #[test]
-    fn test_multiple_emoji() {
-        let input = "🤓😎🥸🤓 🙂";
-        let expected = "<span class=\"single-emoji\">🤓😎🥸🤓 🙂</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_with_url_containing_path() {
+        let text = "Check https://example.com/path/to/page";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("https://example.com/path/to/page"));
+        assert_eq!(links, vec!["https://example.com/path/to/page"]);
     }
 
     #[test]
-    fn test_multiple_emoji2() {
-        let input = "🤓😎🤓🤓";
-        let expected = "<span class=\"single-emoji\">🤓😎🤓🤓</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn link_replacer_with_url_containing_parentheses() {
+        let text = "See (https://example.com/page)";
+        let (html, links) = wrap_links_with_a_tags(text);
+        assert!(html.contains("<a href"));
+        assert!(!links.is_empty());
+    }
+
+    // ============ replace_emojis tests ============
+
+    #[test]
+    fn replace_emojis_smiley() {
+        let result = replace_emojis("Hello :) friend");
+        assert!(result.contains("🙂"));
     }
 
     #[test]
-    fn test_double_emoji_with_space() {
-        let input = "😮 😮";
-        let expected = "<span class=\"single-emoji\">😮 😮</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn replace_emojis_sad_face() {
+        let result = replace_emojis("I'm sad :(");
+        assert!(result.contains("🙁"));
     }
 
     #[test]
-    fn test_comples_emoji() {
-        let input = "👨‍👩‍👦‍👦";
-        let expected = "<span class=\"single-emoji\">👨‍👩‍👦‍👦</span>";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn replace_emojis_wink() {
+        let result = replace_emojis("Just kidding ;)");
+        assert!(result.contains("😉"));
     }
 
     #[test]
-    fn test_emoji_and_words() {
-        let input = "👨‍👩‍👦‍👦abc";
-        let expected = "👨‍👩‍👦‍👦abc";
-        assert_eq!(&transform_only_emoji(input), expected);
+    fn replace_emojis_big_smile() {
+        let result = replace_emojis("Very happy :D");
+        assert!(result.contains("😁"));
+    }
+
+    #[test]
+    fn replace_emojis_evil_smile() {
+        let result = replace_emojis(">:) muahahaha");
+        assert!(result.contains("😈"));
+    }
+
+    #[test]
+    fn replace_emojis_heart() {
+        let result = replace_emojis("I love you <3");
+        assert!(result.contains("❤️"));
+    }
+
+    #[test]
+    fn replace_emojis_no_emoji() {
+        let result = replace_emojis("Plain text");
+        assert_eq!(result, "Plain text");
+    }
+
+    #[test]
+    fn replace_emojis_multiple() {
+        let result = replace_emojis(":) and ;) but :(");
+        assert!(result.contains("🙂"));
+        assert!(result.contains("😉"));
+        assert!(result.contains("🙁"));
+    }
+
+    #[test]
+    fn replace_emojis_neutral_face() {
+        let result = replace_emojis("I'm neutral :/");
+        assert!(result.contains("🫤"));
+    }
+
+    #[test]
+    fn replace_emojis_tongue_out() {
+        let result = replace_emojis("Silly :p");
+        assert!(result.contains("😛"));
+    }
+
+    #[test]
+    fn replace_emojis_xd() {
+        let result = replace_emojis("Very funny xD");
+        assert!(result.contains("😆"));
+    }
+
+    #[test]
+    fn replace_emojis_evil_face_variant() {
+        let result = replace_emojis("Evil >:(");
+        assert!(result.contains("😠"));
+    }
+
+    #[test]
+    fn replace_emojis_expressionless() {
+        let result = replace_emojis("Nothing to say :|");
+        assert!(result.contains("😐"));
+    }
+
+    #[test]
+    fn replace_emojis_surprised() {
+        let result = replace_emojis("What :O");
+        assert!(result.contains("😮"));
+    }
+
+    // ============ is_only_emojis tests ============
+
+    #[test]
+    fn is_only_emojis_single_emoji() {
+        assert!(is_only_emojis("😀"));
+    }
+
+    #[test]
+    fn is_only_emojis_multiple_emojis() {
+        assert!(is_only_emojis("😀😁😂"));
+    }
+
+    #[test]
+    fn is_only_emojis_with_whitespace() {
+        assert!(is_only_emojis("  😀 😁  "));
+    }
+
+    #[test]
+    fn is_only_emojis_text_and_emoji() {
+        assert!(!is_only_emojis("Hello 😀"));
+    }
+
+    #[test]
+    fn is_only_emojis_empty_string() {
+        assert!(is_only_emojis(""));
+    }
+
+    #[test]
+    fn is_only_emojis_plain_text() {
+        assert!(!is_only_emojis("hello world"));
+    }
+
+    #[test]
+    fn is_only_emojis_emoji_with_zwj() {
+        assert!(is_only_emojis("👨‍👩‍👧‍👦"));
+    }
+
+    #[test]
+    fn is_only_emojis_with_special_chars() {
+        assert!(!is_only_emojis("😀!@#"));
+    }
+
+    // ============ process_string tests ============
+
+    #[test]
+    fn process_string_basic() {
+        let result = process_string("hello world", |s| s);
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn process_string_empty() {
+        let result = process_string("", |s| s);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn process_string_single_word() {
+        let result = process_string("hello", |s| s);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn process_string_with_callback() {
+        let result = process_string("a b c", |s| if s == "b" { "B" } else { s });
+        assert!(result.contains("B"));
+    }
+
+    #[test]
+    fn process_string_with_special_characters() {
+        let result = process_string("hello@world#test", |s| s);
+        assert!(result.contains("@"));
+        assert!(result.contains("#"));
+    }
+
+    // ============ stack_processor tests ============
+
+    #[test]
+    fn stack_processor_emoji_smiley() {
+        let result = stack_processor(":)", false, true);
+        assert_eq!(result, "🙂");
+    }
+
+    #[test]
+    fn stack_processor_emoji_heart() {
+        let result = stack_processor("<3", false, true);
+        assert_eq!(result, "❤️");
+    }
+
+    #[test]
+    fn stack_processor_no_emoji_mode() {
+        let result = stack_processor(":)", false, false);
+        assert_eq!(result, ":)");
+    }
+
+    #[test]
+    fn stack_processor_unescape_html() {
+        let result = stack_processor("&amp;", true, false);
+        assert_eq!(result, "&");
+    }
+
+    #[test]
+    fn stack_processor_unescape_nbsp() {
+        let result = stack_processor("&nbsp;", true, false);
+        assert_eq!(result, " ");
+    }
+
+    #[test]
+    fn stack_processor_unknown_input() {
+        let result = stack_processor("xyz", false, true);
+        assert_eq!(result, "xyz");
+    }
+
+    #[test]
+    fn stack_processor_evil_face() {
+        let result = stack_processor(">:(", false, true);
+        assert_eq!(result, "😠");
+    }
+
+    #[test]
+    fn stack_processor_tongue_wink() {
+        let result = stack_processor(";p", false, true);
+        assert_eq!(result, "😜");
+    }
+
+    #[test]
+    fn stack_processor_neutral() {
+        let result = stack_processor(":/", false, true);
+        assert_eq!(result, "🫤");
+    }
+
+    #[test]
+    fn stack_processor_expressionless() {
+        let result = stack_processor(":|", false, true);
+        assert_eq!(result, "😐");
+    }
+
+    #[test]
+    fn stack_processor_surprised() {
+        let result = stack_processor(":O", false, true);
+        assert_eq!(result, "😮");
+    }
+
+    // ============ markdown tests ============
+
+    #[test]
+    fn markdown_plain_text() {
+        let result = markdown("hello world", false);
+        assert!(result.contains("hello world"));
+    }
+
+    #[test]
+    fn markdown_with_emojis() {
+        let result = markdown("hello :)", true);
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn markdown_bold() {
+        let result = markdown("**bold text**", false);
+        assert!(result.contains("<strong>"));
+    }
+
+    #[test]
+    fn markdown_italic() {
+        let result = markdown("*italic text*", false);
+        assert!(result.contains("<em>"));
+    }
+
+    #[test]
+    fn markdown_strikethrough() {
+        let result = markdown("~~strikethrough~~", false);
+        assert!(result.contains("<del>"));
+    }
+
+    #[test]
+    fn markdown_code_inline() {
+        let result = markdown("`code`", false);
+        assert!(result.contains("<code>"));
+    }
+
+    #[test]
+    fn markdown_empty_string() {
+        let result = markdown("", false);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn markdown_with_newlines() {
+        let result = markdown("line1\nline2", false);
+        assert!(result.contains("line1"));
+        assert!(result.contains("line2"));
+    }
+
+    #[test]
+    fn markdown_only_emojis() {
+        let result = markdown("😀😁", true);
+        assert!(result.contains("big-emoji"));
+    }
+
+    #[test]
+    fn markdown_ignores_links() {
+        let result = markdown("[link](https://example.com)", false);
+        assert!(!result.contains("href"));
+    }
+
+    #[test]
+    fn markdown_with_special_characters() {
+        let result = markdown("Text with &, <, > chars", false);
+        assert!(result.contains("&amp;"));
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&gt;"));
+    }
+
+    #[test]
+    fn markdown_with_list() {
+        let result = markdown("- item 1\n- item 2", false);
+        assert!(result.contains("<li>"));
+    }
+
+    #[test]
+    fn markdown_code_block() {
+        let result = markdown("```\ncode block\n```", false);
+        assert!(result.contains("code"));
+    }
+
+    // ============ format_text tests ============
+
+    #[test]
+    fn format_text_plain_no_markdown_no_emoji() {
+        let result = format_text("hello world", false, false, None);
+        assert_eq!(result, "<p>hello world</p>");
+    }
+
+    #[test]
+    fn format_text_with_markdown_enabled() {
+        let result = format_text("**bold**", true, false, None);
+        assert!(result.contains("<strong>"));
+    }
+
+    #[test]
+    fn format_text_with_emoji_enabled() {
+        let result = format_text("hello :)", false, true, None);
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_with_markdown_and_emoji() {
+        let result = format_text("**hello** :)", true, true, None);
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_empty_string() {
+        let result = format_text("", false, false, None);
+        assert!(result.contains("<p>"));
+    }
+
+    #[test]
+    fn format_text_html_escape_ampersand() {
+        let result = format_text("Tom & Jerry", false, false, None);
+        assert!(result.contains("&amp;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_less_than() {
+        let result = format_text("5 < 10", false, false, None);
+        assert!(result.contains("&lt;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_greater_than() {
+        let result = format_text("10 > 5", false, false, None);
+        assert!(result.contains("&gt;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_quote() {
+        let result = format_text("He said \"hi\"", false, false, None);
+        assert!(result.contains("&quot;"));
+    }
+
+    #[test]
+    fn format_text_html_escape_apostrophe() {
+        let result = format_text("Don't", false, false, None);
+        assert!(result.contains("&#x27;"));
+    }
+
+    #[test]
+    fn format_text_only_emojis() {
+        let result = format_text("😀", false, true, None);
+        assert!(result.contains("big-emoji"));
+    }
+
+    #[test]
+    fn format_text_preserves_newlines_as_nbsp() {
+        let result = format_text("line1\nline2", false, false, None);
+        assert!(result.contains("&nbsp;&nbsp;"));
+    }
+
+    #[test]
+    fn format_text_markdown_disabled_emoji_enabled() {
+        let result = format_text("**not bold** :)", false, true, None);
+        assert!(!result.contains("<strong>"));
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_markdown_enabled_emoji_disabled() {
+        let result = format_text("**bold** :)", true, false, None);
+        assert!(result.contains("<strong>"));
+        assert!(!result.contains("🙂"));
+    }
+
+    #[test]
+    fn format_text_xss_prevention() {
+        let result = format_text("<script>alert('xss')</script>", false, false, None);
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&gt;"));
+        assert!(!result.contains("<script>"));
+    }
+
+    // ============ Order enum tests ============
+
+    #[test]
+    fn order_first_display() {
+        let order = Order::First;
+        assert_eq!(order.to_string(), "message-first");
+    }
+
+    #[test]
+    fn order_middle_display() {
+        let order = Order::Middle;
+        assert_eq!(order.to_string(), "message-middle");
+    }
+
+    #[test]
+    fn order_last_display() {
+        let order = Order::Last;
+        assert_eq!(order.to_string(), "message-last");
+    }
+
+    // ============ ReactionAdapter tests ============
+
+    #[test]
+    fn reaction_adapter_creation() {
+        let reaction = ReactionAdapter {
+            emoji: "😀".to_string(),
+            alt: "grinning".to_string(),
+            self_reacted: true,
+            reaction_count: 5,
+        };
+        assert_eq!(reaction.emoji, "😀");
+        assert_eq!(reaction.reaction_count, 5);
+        assert!(reaction.self_reacted);
+    }
+
+    // ============ HTML_ESCAPES tests ============
+
+    #[test]
+    fn html_escapes_ampersand() {
+        let (from, to) = HTML_ESCAPES[0];
+        assert_eq!(from, "&");
+        assert_eq!(to, "&amp;");
+    }
+
+    #[test]
+    fn html_escapes_less_than() {
+        let (from, to) = HTML_ESCAPES[1];
+        assert_eq!(from, "<");
+        assert_eq!(to, "&lt;");
+    }
+
+    #[test]
+    fn html_escapes_greater_than() {
+        let (from, to) = HTML_ESCAPES[2];
+        assert_eq!(from, ">");
+        assert_eq!(to, "&gt;");
+    }
+
+    #[test]
+    fn html_escapes_quote() {
+        let (from, to) = HTML_ESCAPES[3];
+        assert_eq!(from, "\"");
+        assert_eq!(to, "&quot;");
+    }
+
+    #[test]
+    fn html_escapes_apostrophe() {
+        let (from, to) = HTML_ESCAPES[4];
+        assert_eq!(from, "'");
+        assert_eq!(to, "&#x27;");
+    }
+
+    // ============ Integration tests ============
+
+    #[test]
+    fn integration_markdown_with_links_and_emojis() {
+        let text = "Check **this** link: https://example.com :)";
+        let result = format_text(text, true, true, None);
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("https://example.com"));
+        assert!(result.contains("🙂"));
+    }
+
+    #[test]
+    fn integration_html_escape_then_markdown() {
+        let text = "This <script> tag & markdown **bold**";
+        let result = format_text(text, true, false, None);
+        assert!(result.contains("&lt;"));
+        assert!(result.contains("&amp;"));
+        assert!(result.contains("<strong>"));
+    }
+
+    #[test]
+    fn integration_only_emojis_detection() {
+        let text = "😀😁😂";
+        let result = format_text(text, false, true, None);
+        assert!(result.contains("big-emoji"));
+    }
+
+    #[test]
+    fn integration_mixed_emojis_text() {
+        let text = "Hello :) world";
+        let result = format_text(text, false, true, None);
+        assert!(result.contains("Hello"));
+        assert!(result.contains("🙂"));
+        assert!(result.contains("world"));
+    }
+
+    #[test]
+    fn integration_complex_markdown() {
+        let text = "**bold** *italic* ~~strikethrough~~ `code`";
+        let result = format_text(text, true, false, None);
+        assert!(result.contains("<strong>"));
+        assert!(result.contains("<em>"));
+        assert!(result.contains("<del>"));
+        assert!(result.contains("<code>"));
+    }
+
+    // ============ Mention tests (with mocked State) ============
+
+    use std::collections::{HashMap, HashSet, VecDeque};
+    use warp::crypto::DID;
+    use warp::raygun::ConversationSettings;
+    use common::state::{Chat, Chats, Friends, Identity};
+
+    /// Helper: create a minimal State with two identities ("me" and "Bob")
+    /// and one direct chat containing both.
+    fn create_mention_test_state() -> (State, Uuid, Identity, Identity) {
+        let mut me = Identity::default();
+        me.set_username("Alice");
+
+        let mut bob = Identity::default();
+        bob.set_username("Bob");
+
+        let me_did = me.did_key();
+        let bob_did = bob.did_key();
+
+        let mut identities: HashMap<DID, Identity> = HashMap::new();
+        identities.insert(me_did.clone(), me.clone());
+        identities.insert(bob_did.clone(), bob.clone());
+
+        let chat_id = Uuid::new_v4();
+        let mut participants = HashSet::new();
+        participants.insert(me_did);
+        participants.insert(bob_did);
+
+        let chat = Chat::new(
+            chat_id,
+            participants,
+            ConversationSettings::Direct(Default::default()),
+            None,
+            None,
+            VecDeque::new(),
+            vec![],
+        );
+
+        let mut all_chats = HashMap::new();
+        all_chats.insert(chat_id, chat);
+
+        let chats = Chats {
+            all: all_chats,
+            active: Some(chat_id),
+            active_media: None,
+            in_sidebar: VecDeque::new(),
+            favorites: vec![],
+            readd_sidebars: false,
+        };
+
+        let friends = Friends {
+            all: HashSet::new(),
+            blocked: HashSet::new(),
+            incoming_requests: HashSet::new(),
+            outgoing_requests: HashSet::new(),
+        };
+
+        let storage = common::state::storage::Storage::default();
+
+        let state = State::mock(me.clone(), identities, chats, friends, storage);
+        (state, chat_id, me, bob)
+    }
+
+    #[test]
+    fn format_text_with_did_mention() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Hello @{} ", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // The mention should be replaced with a user tag
+        assert!(result.contains("message-user-tag"), "Mention should produce a user tag");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+        assert!(result.contains(&bob.did_key().to_string()), "Tag should contain the DID");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_and_markdown() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("**Hi** @{} how are you?", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Markdown should be applied
+        assert!(result.contains("<strong>"), "Markdown bold should be applied");
+        // Mention should be rendered
+        assert!(result.contains("message-user-tag"), "Mention should produce a user tag");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_and_emoji() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("@{} :)", bob.did_key());
+        let result = format_text(&mention, false, true, Some((&state, &chat_id, false)));
+
+        // Mention should be rendered
+        assert!(result.contains("message-user-tag"), "Mention should produce a user tag");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+        // Emoji should be converted
+        assert!(result.contains("🙂"), "Emoji should be converted");
+    }
+
+    #[test]
+    fn format_text_with_multiple_did_mentions() {
+        // Create a state with a third participant "Charlie"
+        let mut me = Identity::default();
+        me.set_username("Alice");
+
+        let mut bob = Identity::default();
+        bob.set_username("Bob");
+
+        let mut charlie = Identity::default();
+        charlie.set_username("Charlie");
+
+        let me_did = me.did_key();
+        let bob_did = bob.did_key();
+        let charlie_did = charlie.did_key();
+
+        let mut identities: HashMap<DID, Identity> = HashMap::new();
+        identities.insert(me_did.clone(), me.clone());
+        identities.insert(bob_did.clone(), bob.clone());
+        identities.insert(charlie_did.clone(), charlie.clone());
+
+        let chat_id = Uuid::new_v4();
+        let mut participants = HashSet::new();
+        participants.insert(me_did);
+        participants.insert(bob_did.clone());
+        participants.insert(charlie_did.clone());
+
+        let chat = Chat::new(
+            chat_id,
+            participants,
+            ConversationSettings::Direct(Default::default()),
+            None,
+            None,
+            VecDeque::new(),
+            vec![],
+        );
+
+        let mut all_chats = HashMap::new();
+        all_chats.insert(chat_id, chat);
+
+        let chats = Chats {
+            all: all_chats,
+            active: Some(chat_id),
+            active_media: None,
+            in_sidebar: VecDeque::new(),
+            favorites: vec![],
+            readd_sidebars: false,
+        };
+
+        let state = State::mock(me.clone(), identities, chats, Friends::default(), common::state::storage::Storage::default());
+
+        let mention = format!("Hey @{} and @{} ", bob.did_key(), charlie.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Both mentions should be rendered
+        assert!(result.contains("message-user-tag"), "Mentions should produce user tags");
+        assert!(result.contains("@Bob"), "First mention should contain Bob");
+        assert!(result.contains("@Charlie"), "Second mention should contain Charlie");
+
+        // Count occurrences of message-user-tag — should be 2
+        let tag_count = result.matches("message-user-tag").count();
+        assert_eq!(tag_count, 2, "Both mentions should be rendered");
+    }
+
+    #[test]
+    fn format_text_with_non_participant_did() {
+        let (state, chat_id, _me, _bob) = create_mention_test_state();
+
+        // Create a DID that is NOT in the chat participants
+        let stranger = Identity::default();
+        let mention = format!("Hello @{} ", stranger.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // The non-participant DID should NOT be turned into a tag
+        // (parse_mentions keeps it as-is when no match is found)
+        assert!(!result.contains("message-user-tag"), "Non-participant should not be tagged");
+        // The DID text should still appear in the output
+        assert!(result.contains(&stranger.did_key().to_string()), "DID text should be preserved");
+    }
+
+    #[test]
+    fn format_text_with_self_mention() {
+        let (state, chat_id, me, _bob) = create_mention_test_state();
+        let mention = format!("Hey @{} ", me.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Self-mention should also produce a tag
+        assert!(result.contains("message-user-tag"), "Self-mention should produce a user tag");
+        assert!(result.contains("@Alice"), "Tag should contain self username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_visual_mode() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Hi @{} ", bob.did_key());
+        // With visual = true
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, true)));
+
+        // When visual = true, the tag should have class "visual-only"
+        assert!(result.contains("visual-only"), "Visual mode should add visual-only class");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_at_start() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("@{} look here", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        assert!(result.contains("message-user-tag"), "Mention at start should work");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_at_end() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("See this @{}", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        assert!(result.contains("message-user-tag"), "Mention at end should work");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_in_code_block() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Code: `@{}`", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Mentions inside backtick code blocks should NOT be replaced
+        assert!(!result.contains("message-user-tag"), "Mention in code block should not be tagged");
+        // The raw DID text should appear inside the code span
+        assert!(result.contains("<code>"), "Code block should be rendered");
+    }
+
+    #[test]
+    fn format_text_without_state_no_mention_replacement() {
+        let (_state, _chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Hello @{} ", bob.did_key());
+        // When no state is passed (None), no mention replacement should happen
+        let result = format_text(&mention, true, false, None);
+
+        assert!(!result.contains("message-user-tag"), "Without state, no tag should be produced");
+        assert!(result.contains(&bob.did_key().to_string()), "Raw DID text should be preserved");
+    }
+
+    #[test]
+    fn format_text_with_mention_and_xss_prevention() {
+        let (state, chat_id, _me, _bob) = create_mention_test_state();
+        let mention = "<script>alert('xss')</script>";
+        let result = format_text(mention, true, false, Some((&state, &chat_id, false)));
+
+        // HTML should be escaped even when state is present
+        assert!(result.contains("&lt;script&gt;"), "XSS should be prevented");
+        assert!(!result.contains("<script>"), "Raw script tag should not appear");
+    }
+
+    #[test]
+    fn format_text_with_mention_markdown_and_xss() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        // Combine mention, markdown, and XSS attempt
+        let mention = format!("**bold** <script>x</script> @{}", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Markdown works
+        assert!(result.contains("<strong>"), "Markdown should be applied");
+        // XSS is prevented
+        assert!(result.contains("&lt;script&gt;"), "XSS should be prevented");
+        // Mention works
+        assert!(result.contains("message-user-tag"), "Mention should be rendered");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
     }
 }

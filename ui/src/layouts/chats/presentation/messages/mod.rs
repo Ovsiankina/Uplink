@@ -87,7 +87,7 @@ pub type DownloadTracker = HashMap<Uuid, HashSet<warp::constellation::file::File
 pub fn get_messages(
     cx: Scope,
     quickprofile_data: UseRef<Option<(f64, f64, Identity, bool)>>,
-) -> Element {
+) -> Element<'a> {
     log::trace!("get_messages");
     use_shared_state_provider(cx, || -> DownloadTracker { HashMap::new() });
     let state = use_shared_state::<State>(cx)?;
