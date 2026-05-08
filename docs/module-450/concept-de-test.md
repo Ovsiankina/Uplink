@@ -53,7 +53,7 @@ Les objectifs visés sont :
 
 ### 1.3 Critères de couverture
 
-L'objectif de couverture de code était fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). Dans le cadre de cette campagne, seuls les tests E2E automatisés ont été implémentés — les tests unitaires et d'intégration prévus n'ont pas été rédigés. Aucune mesure de couverture n'a donc été effectuée.
+L'objectif de couverture de code était fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). **102 tests unitaires** et **20 tests d'intégration** ont été implémentés dans le module message, couvrant l'intégralité des fonctions de formatage (`format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor`) avec des scénarios nominaux, d'exception et limites. Un test E2E automatisé (WebdriverIO + Appium + WinAppDriver) et un test E2E manuel complètent la couverture. Aucune mesure de couverture de code n'a été effectuée (outil non configuré dans le pipeline).
 
 ---
 
@@ -129,7 +129,7 @@ Le module **message** (`kit/src/components/message/mod.rs`) a été retenu comme
 
 > **Note :** Nous reconnaissons qu'une approche plus conventionnelle commencerait par tester les couches les plus critiques du point de vue système — typiquement la gestion de l'état (`common/state`) ou la couche réseau. Cependant, la couche réseau d'Uplink repose entièrement sur Warp/IPFS, qui sont des dépendances externes avec leur propre suite de tests. Tester ces couches reviendrait en grande partie à tester des bibliothèques tierces plutôt que la logique propre à Uplink. Le module message, en revanche, contient de la logique 100% propre au projet, ce qui maximise la pertinence des tests écrits.
 
-> **Note :** Sur la fonctionnalité de communication P2P, ce module n'a pas été séléctionné alors qu'il est au coeur même du marketing et de l'image même de l'application Uplink. Cependant, cette stack software dépend exclusivement de la dépendance `Wrap`. Nous estimons qu'il n'est pas de notre résponsabilité de tester les dépendances.
+> **Note :** Sur la fonctionnalité de communication P2P, ce module n'a pas été sélectionné alors qu'il est au cœur même du marketing et de l'image de l'application Uplink. Cependant, cette stack software dépend exclusivement de la dépendance **Warp**. Nous estimons qu'il n'est pas de notre responsabilité de tester les dépendances.
 
 ### 3.3 Périmètre détaillé du module message
 
@@ -174,12 +174,12 @@ Ces modules pourront faire l'objet de campagnes de tests ultérieures, en suivan
 
 La stratégie de test suit la pyramide de tests classique, avec une base solide de tests unitaires, complétée par des tests d'intégration et des tests E2E.
 
-| Niveau | Quantité min. | Cible | Approche |
+| Niveau | Quantité | Cible | Approche |
 |---|---|---|---|
-| Tests unitaires | 0 (non implémentés) | Fonctions pures : `format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor` | Automatique (`cargo test`) — **non rédigés** |
-| Tests d'intégration | 0 (non implémentés) | Interaction entre `format_text`, `markdown` et `wrap_links_with_a_tags` ; chaînes de formatage complètes | Automatique (`cargo test`) — **non rédigés** |
-| Tests E2E manuels | 1+ | Envoi et réception d'un message avec formatage markdown dans l'interface complète | Manuel |
-| Tests E2E automatisés | 1 | Scénario d'envoi d'un émoticône en ASCII et vérification de son replacement par un emoji Unicode dans la sidebar de l'historique des "chats".  | Automatique (WebdriverIO 8 + Appium + WinAppDriver, uniquement Windows)[^1] |
+| Tests unitaires | **102** | Fonctions pures : `format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor` + mentions (State mocké) | Automatique (`cargo test`) — ✅ **rédigés** |
+| Tests d'intégration | **20** | Interaction entre `format_text`, `markdown` et `wrap_links_with_a_tags` ; chaînes de formatage complètes ; XSS ; code blocks | Automatique (`cargo test`) — ✅ **rédigés** |
+| Tests E2E manuels | **1** | Envoi et réception d'un message avec formatage markdown dans l'interface complète | Manuel |
+| Tests E2E automatisés | **1** | Scénario d'envoi d'un émoticône en ASCII et vérification de son replacement par un emoji Unicode dans la sidebar | Automatique (WebdriverIO 8 + Appium + WinAppDriver, Windows uniquement)[^1] |
 
 
 [^1]: L'app utilise des WebView multiplateformes (WebView2 sur Windows, WebKit sur macOS, et WebKitGTK sur Linux), ce qui rend l'automatisation e2e multiplatform complexe. Les frameworks e2e traditionnels comme Playwright sont incompatibles avec les WebView, nécessitant une approche basée sur le contrôle des périphériques via curseur virtuel et input clavier. L'équipe a choisi **WebdriverIO 8** comme orchestrateur de tests, avec **Appium 2** comme serveur et **WinAppDriver** comme driver Windows — un SDK Microsoft officiel permettant le contrôle des applications natives. L'infrastructure macOS (Mac2Driver, sélecteurs XCUI, helpers) est maintenue dans le code source mais n'est pas exécutée faute de matériel de test disponible. Les tests sont donc exécutés exclusivement sur Windows 10/11.
@@ -188,34 +188,69 @@ La stratégie de test suit la pyramide de tests classique, avec une base solide 
 
 ### 4.2 Tests unitaires
 
-Les tests unitaires couvrent **intégralement** les fonctions de traitement de texte du module message. Chaque fonction est testée avec des scénarios nominaux, d'exception et limites. Les tests utilisent des données de test pertinentes, et les dépendances externes (State, Warp) sont mockées.
+Les tests unitaires couvrent **intégralement** les fonctions de traitement de texte du module message. Chaque fonction est testée avec des scénarios nominaux, d'exception et limites. Les tests utilisent des données de test pertinentes, et les dépendances externes (State, Warp) sont mockées via `State::mock()` (Fake) pour les tests de mentions.
 
-**Répartition prévue des tests unitaires :**
+**Répartition des tests unitaires :**
 
 | Fonction | Nb tests | Scénarios clés |
 |---|---|---|
-| `format_text()` | 10–12 | Texte simple, markdown activé/désactivé, emojis activés/désactivés, échappement HTML, chaîne vide, mentions (avec mock State) |
-| `markdown()` | 10–12 | Gras, italique, barré, code inline, bloc de code, listes, emojis dans markdown, texte sans markdown, caractères spéciaux, big emoji |
-| `replace_emojis()` | 6–8 | Chaque émoticône ASCII (`:)`, `:(`, `;)`, `:D`, `xD`, `:p`, etc.), texte mixte, aucun emoji |
-| `process_string()` | 4–5 | Mots séparés par espaces, chaîne vide, un seul mot, caractères spéciaux |
-| `stack_processor()` | 6–8 | Chaque émoticône, mode unescape_html, mode sans emoji, entrée inconnue |
-| `wrap_links_with_a_tags()` | 6–8 | URL http, https, www, mailto, texte sans lien, URLs multiples, URL avec parenthèses |
-| `is_only_emojis()` | 6–8 | Emoji unique, multiples emojis, texte + emoji, chaîne vide, caractères spéciaux, émojis composés (ZWJ) |
-| `Order` (enum) | 3 | Display trait : First, Middle, Last |
-| `HTML_ESCAPES` | 3–5 | Vérification de chaque paire d'échappement dans format_text |
+| `format_text()` | **25** | Texte simple, markdown activé/désactivé, emojis activés/désactivés, échappement HTML, chaîne vide, XSS, mentions (avec mock State), newlines, big-emoji |
+| `markdown()` | **12** | Gras, italique, barré, code inline, bloc de code, listes, emojis dans markdown, texte sans markdown, caractères spéciaux, big emoji, liens ignorés |
+| `replace_emojis()` | **14** | Chaque émoticône ASCII (`:)`, `:(`, `;)`, `:D`, `xD`, `:p`, `<3`, `>:)`, etc.), texte mixte, aucun emoji, multiples emojis |
+| `process_string()` | **5** | Mots séparés par espaces, chaîne vide, un seul mot, callback personnalisé, caractères spéciaux |
+| `stack_processor()` | **11** | Chaque émoticône, mode unescape_html, mode sans emoji, entrée inconnue |
+| `wrap_links_with_a_tags()` | **9** | URL http, https, www, mailto, texte sans lien, URLs multiples, URL avec parenthèses, URL avec chemin, TLD varié |
+| `is_only_emojis()` | **8** | Emoji unique, multiples emojis, texte + emoji, chaîne vide, caractères spéciaux, émojis composés (ZWJ), whitespace |
+| `Order` (enum) | **3** | Display trait : First, Middle, Last |
+| `ReactionAdapter` | **1** | Création et validation des champs |
+| `HTML_ESCAPES` | **5** | Vérification de chaque paire d'échappement (`&`, `<`, `>`, `"`, `\'`) |
+
+**Tests de mentions avec State mocké (13 tests) :**
+
+| Test | Scénario |
+|---|---|
+| `format_text_with_did_mention` | Mention `@did:key:...` remplacée par un tag |
+| `format_text_with_did_mention_and_markdown` | Mention + gras markdown |
+| `format_text_with_did_mention_and_emoji` | Mention + conversion `:)` → `🙂` |
+| `format_text_with_multiple_did_mentions` | 2 mentions dans un même message |
+| `format_text_with_non_participant_did` | DID hors participants → pas de tag |
+| `format_text_with_self_mention` | Mention de soi-même |
+| `format_text_with_did_mention_visual_mode` | Mode `visual = true` → classe `visual-only` |
+| `format_text_with_did_mention_at_start` | Mention en début de chaîne |
+| `format_text_with_did_mention_at_end` | Mention en fin de chaîne |
+| `format_text_with_did_mention_in_code_block` | Mention dans du code → ignorée |
+| `format_text_without_state_no_mention_replacement` | `None` au lieu de State → pas de replacement |
+| `format_text_with_mention_and_xss_prevention` | `<script>` échappé même avec State présent |
+| `format_text_with_mention_markdown_and_xss` | Mention + markdown + XSS combinés |
 
 ### 4.3 Tests d'intégration
 
 Les tests d'intégration vérifient l'interaction entre plusieurs fonctions du module. Ils couvrent **partiellement** les fonctionnalités en combinant formatage, détection de liens et rendu.
+
+**20 tests d'intégration** ont été rédigés dans `kit/tests/integration_message.rs` :
 
 | ID | Scénario d'intégration | Fonctions impliquées |
 |---|---|---|
 | INT-01 | Formatage complet d'un message avec markdown + liens + emojis | `format_text` → `markdown` → `wrap_links_with_a_tags` |
 | INT-02 | Message avec échappement HTML suivi de markdown et détection de liens | `format_text` (HTML escape) → `markdown` → `wrap_links_with_a_tags` |
 | INT-03 | Message contenant uniquement des emojis doit avoir la classe big-emoji | `format_text` → `replace_emojis` → `is_only_emojis` |
+| INT-03b | Emojis ASCII convertis deviennent big-emoji | `format_text` → `replace_emojis` → `is_only_emojis` |
 | INT-04 | Message avec liens mailto et URL mixtes dans du texte markdown | `markdown` → `wrap_links_with_a_tags` (avec mailto) |
 | INT-05 | Chaîne contenant des caractères HTML malveillants suivie de formatage complet | `format_text` (XSS prevention) → `markdown` |
-| INT-06 | Message avec blocs de code contenant des emojis ASCII (ne doivent pas être remplacés dans le code) | `markdown` (code block) + `stack_processor` |
+| INT-05b | Événements HTML malveillants (onerror, etc.) | `format_text` (XSS prevention) |
+| INT-06 | Message avec blocs de code contenant des emojis ASCII (pas de conversion dans le code) | `markdown` (code block) + `stack_processor` |
+| INT-06b | Bloc de code indenté avec emojis | `markdown` (code block) |
+| — | Combinaison complexe markdown + XSS + liens + emojis | `format_text` (pipeline complet) |
+| — | Messages avec types de liens multiples | `format_text` → `wrap_links_with_a_tags` |
+| — | Tous les types de markdown (bold, italic, strikethrough, code) | `format_text` → `markdown` |
+| — | Pipeline complet HTML escape + markdown + links + emojis | `format_text` (pipeline complet) |
+| — | Chaîne ne contenant que des espaces (edge case) | `format_text` |
+| — | Caractères HTML spéciaux uniquement (edge case) | `format_text` (HTML escape) |
+| — | Ordre d'affichage (enum Order) | `Order::Display` |
+| — | Gestion des newlines | `format_text` |
+| — | Syntaxe de lien markdown ignorée mais URLs détectées | `format_text` → `markdown` |
+| — | Emojis avec whitespace autour | `format_text` → `is_only_emojis` |
+| — | Scénario réaliste complet | `format_text` (pipeline complet) |
 
 ### 4.4 Tests E2E
 
@@ -253,15 +288,16 @@ Scénario automatisé utilisant **WebdriverIO 8 + Appium 2 + WinAppDriver** sur 
 
 | Composant | Technologie | Détail |
 |---|---|---|
-| Langage (tests unitaires) | Rust | Les tests unitaires seraient écrits en Rust avec `#[cfg(test)]` |
-| Langage (tests E2E) | **TypeScript** | Le test E2E automatisé est écrit en TypeScript, exécuté via WebdriverIO |
-| Framework de test unitaire | `cargo test` (built-in) | Framework de test intégré à Rust — **non utilisé dans cette campagne** |
-| Framework de test E2E | **WebdriverIO 8 + Appium 2** | Orchestrateur de tests WebdriverIO avec le service `@wdio/appium-service` pour lancer Appium automatiquement |
-| Driver Windows | **WinAppDriver** (via `appium-windows-driver`) | SDK Microsoft pour le contrôle des applications Windows natives via UI Automation (UIA) |
-| Mocking | `mockall` ou implémentation manuelle (prévu) | Pour isoler les dépendances (State, Warp, etc.) — **non implémenté** |
+| Langage (tests unitaires) | Rust | Tests unitaires écrits en Rust avec `#[cfg(test)]` — **102 tests** |
+| Langage (tests d'intégration) | Rust | Tests d'intégration dans `kit/tests/integration_message.rs` — **20 tests** |
+| Langage (tests E2E) | **TypeScript** | Test E2E automatisé écrit en TypeScript, exécuté via WebdriverIO |
+| Framework de test unitaire | `cargo test` (built-in) | ✅ **102 tests unitaires + 20 tests d'intégration** |
+| Framework de test E2E | **WebdriverIO 8 + Appium 2** | Orchestrateur de tests WebdriverIO avec le service `@wdio/appium-service` |
+| Driver Windows | **WinAppDriver** (via `appium-windows-driver`) | SDK Microsoft pour le contrôle des applications Windows natives |
+| Mocking | **`State::mock()` (Fake)** | `State::mock()` utilisé dans 12 tests de mentions pour isoler la dépendance Warp |
 | Couverture de code | `cargo-tarpaulin` ou `llvm-cov` (prévu) | Génération de rapports de couverture — **non mesurée** |
 | Script de lancement | **PowerShell** (`msg-test.ps1`) | Tue les processus résiduels, définit les variables d'environnement, lance wdio |
-| OS | **Windows 10/11** uniquement | L'infrastructure macOS existe dans le code mais n'est pas exécutée |
+| OS | **Windows 10/11** (E2E), **Linux/macOS** (unitaires) | L'infrastructure macOS existe dans le code mais n'est pas exécutée faute de matériel |
 
 ### 5.2 Données de test
 
@@ -269,31 +305,27 @@ Les tests utilisent trois types de données de test :
 
 | Type | Usage | Exemple |
 |---|---|---|
-| Stub | Remplacer les dépendances externes par des valeurs fixes | Un State stub retourné avec des participants prédéfinis pour tester les mentions |
-| Fake | Implémentations simplifiées de composants complexes | Un faux système de fichiers pour tester les pièces jointes |
-| Mock | Vérification des interactions entre composants | Mock de l'EventHandler pour vérifier que `on_edit` est appelé lors de l'édition |
+| **Stub** | Valeurs fixes pour les appels de fonctions pures | Entrées de texte prédéfinies pour `format_text`, `markdown`, `replace_emojis` |
+| **Fake** | `State::mock()` — implémentation simplifiée de State avec participants et chats factices | Création d'un State minimal (Alice, Bob) pour tester les mentions sans Warp |
+| — | `Identity::default()` — identités génériques avec DID, username, short_id | Création d'un participant « Charlie » pour tester les mentions multiples |
 
 ### 5.3 Exécution des tests
 
 Commandes pour exécuter les différents types de tests :
 
 ```bash
-# Tests unitaires (non implémentés — commande théorique)
-cargo test --package kit --lib components::message
-
-# Tests d'intégration (non implémentés — commande théorique)
-cargo test --package kit --test integration_message
-
-# Couverture de code (non mesurée — commande théorique)
-cargo tarpaulin --packages kit --out Html
+# Tests unitaires + d'intégration
+cargo test
 
 # Lancer le test E2E automatisé sur Windows
-# Depuis le répertoire tmp-testing-uplink/
+# Depuis le répertoire tests/e2e-automatisé
 .\msg-test.ps1
-
-# Ou directement avec npx
-npx cross-env DRIVER=windows npx wdio config/wdio.windows.chats.conf.ts
 ```
+
+Rust a un écosystème très robuste. La commande `cargo test` gère automatiquement l'appel
+de tous les tests, qu'ils soient unitaires ou d'intégration.
+
+
 
 ---
 
@@ -339,16 +371,16 @@ tmp-testing-uplink/                (projet de test E2E séparé)
 └── tsconfig.json
 ```
 
-Les tests unitaires et d'intégration (Rust) seraient organisés selon la convention Rust standard :
+Les tests unitaires et d'intégration (Rust) sont organisés selon la convention Rust standard :
 
 ```
 kit/
 ├── src/
 │   └── components/
 │       └── message/
-│           └── mod.rs              (tests unitaires inline #[cfg(test)] — non rédigés)
+│           └── mod.rs              (102 tests unitaires inline #[cfg(test)])
 └── tests/
-    └── integration_message.rs      (tests d'intégration — non rédigés)
+    └── integration_message.rs      (20 tests d'intégration)
 ```
 
 ### 6.3 Processus de test
@@ -371,9 +403,9 @@ Le processus suit une approche itérative :
 | Phase | Durée | Début | Fin | Livrable | Statut |
 |---|---|---|---|---|---|
 | Analyse du code + rédaction du concept | 1 semaine | 24.03.2026 | 28.03.2026 | Concept de test (ce document) | ✅ Terminé |
-| Rédaction des tests unitaires | 2 semaines | 31.03.2026 | 11.04.2026 | 50+ tests unitaires dans mod.rs | ❌ **Non implémenté** |
-| Rédaction des tests d'intégration | 1 semaine | 14.04.2026 | 18.04.2026 | 5+ tests d'intégration | ❌ **Non implémenté** |
-| Rédaction des tests E2E | 2 semaines | 21.04.2026 | 05.05.2026 | 1 test automatisé (TypeScript, WebdriverIO + Appium) | ✅ Terminé (développement concentré ici) |
+| Rédaction des tests unitaires | 2 semaines | 31.03.2026 | 11.04.2026 | **102 tests unitaires** dans mod.rs | ✅ Terminé |
+| Rédaction des tests d'intégration | 1 semaine | 14.04.2026 | 18.04.2026 | **20 tests d'intégration** | ✅ Terminé |
+| Rédaction des tests E2E | 2 semaines | 21.04.2026 | 05.05.2026 | 1 test automatisé (TypeScript, WebdriverIO + Appium) + 1 test manuel | ✅ Terminé |
 | Exécution, rapport + vidéo | 1 semaine | 28.04.2026 | 05.05.2026 | Rapport de couverture + vidéo | ⏳ En cours |
 | Remise finale | — | — | 08.05.2026 | Tous les livrables | ⏳ En cours |
 
@@ -429,13 +461,12 @@ Les conditions suivantes doivent être remplies avant de commencer les tests :
 
 Les tests sont considérés terminés lorsque :
 
+- Les **102 tests unitaires** passent avec succès (`cargo test -p kit --lib components::message`)
+- Les **20 tests d'intégration** passent avec succès (`cargo test -p kit --test integration_message`)
 - Le test E2E automatisé (E2E-A01) a été exécuté avec succès et documenté
 - La procédure de test E2E manuelle (E2E-M01) a été rédigée et peut être exécutée
-- La vidéo de démonstration a été réalisée
 - Aucun défaut de sévérité S1 ou S2 n'est ouvert
 - Les rapports et la documentation sont complets
-
-**Note :** Les critères de 50+ tests unitaires, 5+ tests d'intégration et 80% de couverture de code, initialement prévus dans ce concept, n'ont pas été atteints dans le cadre de cette campagne.
 
 ### 9.3 Critères de suspension
 
