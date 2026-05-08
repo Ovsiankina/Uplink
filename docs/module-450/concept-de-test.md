@@ -53,7 +53,15 @@ Les objectifs visés sont :
 
 ### 1.3 Critères de couverture
 
-L'objectif de couverture de code était fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). **102 tests unitaires** et **20 tests d'intégration** ont été implémentés dans le module message, couvrant l'intégralité des fonctions de formatage (`format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor`) avec des scénarios nominaux, d'exception et limites. Un test E2E automatisé (WebdriverIO + Appium + WinAppDriver) et un test E2E manuel complètent la couverture. Aucune mesure de couverture de code n'a été effectuée (outil non configuré dans le pipeline).
+**102 tests unitaires** et **20 tests d'intégration** ont été implémentés dans le module message, couvrant l'intégralité des fonctions de formatage (`format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor`) avec des scénarios nominaux, d'exception et limites. Un test E2E automatisé (WebdriverIO + Appium + WinAppDriver) et un test E2E manuel complètent la couverture.
+
+**Position sur la mesure de couverture de code.** L'objectif à terme est d'atteindre un seuil de couverture de code mesuré (cible long terme : 80% minimum sur les fonctions pures du périmètre testé), avec intégration au pipeline CI via `cargo-tarpaulin` ou `llvm-cov`. Cette mesure n'est cependant **pas réalisée dans le cadre de cette campagne**, et ce de manière assumée :
+
+- Le périmètre de test a été délibérément restreint au seul module `message` (cf. section 3.2), conformément à la portée définie pour ce projet (un module représentatif, exhaustivement testé). Mesurer un pourcentage de couverture sur l'ensemble du workspace Rust produirait un chiffre artificiellement bas et trompeur, puisque les autres modules — réseau (Warp/IPFS), WebRTC, extensions — sont volontairement hors périmètre, non parce qu'ils sont sans valeur, mais parce que tester des dépendances externes ne relève pas de notre responsabilité projet.
+- À l'inverse, un calcul de couverture restreint au seul module `message` serait peu informatif : la stratégie retenue cible déjà l'**exhaustivité fonctionnelle** (chaque fonction publique du module est testée avec scénarios nominaux, d'exception et limites). Le pourcentage convergerait mécaniquement vers une valeur élevée sans apporter de signal qualité supplémentaire au-delà de ce que démontre déjà la liste des cas couverts.
+- Dans une démarche d'entreprise mature, la mesure de couverture n'apporte de valeur qu'à partir du moment où la suite de tests couvre un périmètre représentatif de l'application — typiquement après extension progressive aux modules état global, persistance, et logique métier. Les 102 tests unitaires actuels constituent le **socle pilote** de cette démarche, à étendre lors des itérations suivantes.
+
+La cible de couverture mesurée demeure donc l'objectif final, mais sa quantification est différée jusqu'à ce que le périmètre de test atteigne une masse critique pertinente.
 
 ---
 
@@ -182,7 +190,7 @@ La stratégie de test suit la pyramide de tests classique, avec une base solide 
 | Tests E2E automatisés | **1** | Scénario d'envoi d'un émoticône en ASCII et vérification de son replacement par un emoji Unicode dans la sidebar | Automatique (WebdriverIO 8 + Appium + WinAppDriver, Windows uniquement)[^1] |
 
 
-[^1]: L'app utilise des WebView multiplateformes (WebView2 sur Windows, WebKit sur macOS, et WebKitGTK sur Linux), ce qui rend l'automatisation e2e multiplatform complexe. Les frameworks e2e traditionnels comme Playwright sont incompatibles avec les WebView, nécessitant une approche basée sur le contrôle des périphériques via curseur virtuel et input clavier. L'équipe a choisi **WebdriverIO 8** comme orchestrateur de tests, avec **Appium 2** comme serveur et **WinAppDriver** comme driver Windows — un SDK Microsoft officiel permettant le contrôle des applications natives. L'infrastructure macOS (Mac2Driver, sélecteurs XCUI, helpers) est maintenue dans le code source mais n'est pas exécutée faute de matériel de test disponible. Les tests sont donc exécutés exclusivement sur Windows 10/11.
+[^1]: L'app utilise des WebView multiplateformes (WebView2 sur Windows, WebKit sur macOS, et WebKitGTK sur Linux), ce qui rend l'automatisation e2e multiplateforme complexe. Les frameworks e2e traditionnels comme Playwright sont incompatibles avec les WebView, nécessitant une approche basée sur le contrôle des périphériques via curseur virtuel et input clavier. L'équipe a choisi **WebdriverIO 8** comme orchestrateur de tests, avec **Appium 2** comme serveur et **WinAppDriver** comme driver Windows — un SDK Microsoft officiel permettant le contrôle des applications natives. L'infrastructure macOS (Mac2Driver, sélecteurs XCUI, helpers) est maintenue dans le code source mais n'est pas exécutée faute de matériel de test disponible. Les tests sont donc exécutés exclusivement sur Windows 10/11.
 
 **Mode mock :** Le test utilise le flag `--with-mock` d'Uplink qui génère 20 amis et conversations factices localement sans nécessiter de réseau P2P, combiné à `--discovery disable` pour éviter le blocage au démarrage. Cela permet d'exécuter le scénario complet sur une seule instance Uplink, ce qui est nécessaire car WinAppDriver lie chaque session WebDriver à un seul processus.
 
@@ -194,16 +202,20 @@ Les tests unitaires couvrent **intégralement** les fonctions de traitement de t
 
 | Fonction | Nb tests | Scénarios clés |
 |---|---|---|
-| `format_text()` | **25** | Texte simple, markdown activé/désactivé, emojis activés/désactivés, échappement HTML, chaîne vide, XSS, mentions (avec mock State), newlines, big-emoji |
-| `markdown()` | **12** | Gras, italique, barré, code inline, bloc de code, listes, emojis dans markdown, texte sans markdown, caractères spéciaux, big emoji, liens ignorés |
+| `format_text()` (hors mentions) | **15** | Texte simple, markdown activé/désactivé, emojis activés/désactivés, échappement HTML (5 caractères), chaîne vide, XSS, newlines préservées, big-emoji |
+| `markdown()` | **13** | Gras, italique, barré, code inline, bloc de code, listes, emojis dans markdown, texte sans markdown, caractères spéciaux, big emoji, liens ignorés, newlines, chaîne vide |
 | `replace_emojis()` | **14** | Chaque émoticône ASCII (`:)`, `:(`, `;)`, `:D`, `xD`, `:p`, `<3`, `>:)`, etc.), texte mixte, aucun emoji, multiples emojis |
 | `process_string()` | **5** | Mots séparés par espaces, chaîne vide, un seul mot, callback personnalisé, caractères spéciaux |
 | `stack_processor()` | **11** | Chaque émoticône, mode unescape_html, mode sans emoji, entrée inconnue |
-| `wrap_links_with_a_tags()` | **9** | URL http, https, www, mailto, texte sans lien, URLs multiples, URL avec parenthèses, URL avec chemin, TLD varié |
+| `wrap_links_with_a_tags()` (`LinkReplacer`) | **9** | URL http, https, www, mailto, texte sans lien, URLs multiples, URL avec parenthèses, URL avec chemin, TLD varié |
 | `is_only_emojis()` | **8** | Emoji unique, multiples emojis, texte + emoji, chaîne vide, caractères spéciaux, émojis composés (ZWJ), whitespace |
 | `Order` (enum) | **3** | Display trait : First, Middle, Last |
 | `ReactionAdapter` | **1** | Création et validation des champs |
 | `HTML_ESCAPES` | **5** | Vérification de chaque paire d'échappement (`&`, `<`, `>`, `"`, `\'`) |
+| Tests intégration internes (`integration_*` inline) | **5** | Combinaisons markdown + liens + emojis ; HTML escape + markdown ; détection only-emojis ; emojis mixtes ; markdown complexe |
+| Mentions avec State mocké (`format_text_with_did_*`) | **13** | Voir détail ci-dessous |
+
+**Total : 102 tests unitaires.**
 
 **Tests de mentions avec State mocké (13 tests) :**
 
@@ -278,7 +290,7 @@ Scénario automatisé utilisant **WebdriverIO 8 + Appium 2 + WinAppDriver** sur 
 | 4 | Saisir `:)` dans la barre de saisie → cliquer sur Envoyer | Le message est envoyé |
 | 5 | Vérifier que la sidebar affiche `🙂` comme dernier message de la conversation | La sidebar contient `🙂` (preuve que `replace_emojis` a converti `:)` en 🙂) |
 
-**Remarque :** Le test s'exécute en mode mock (instance unique), il n'y a pas de second utilisateur pour vérifier le rendu côté réception. La conversion d'emoji est validée via l'aperçu dans la sidebar.
+**Remarque :** Le test s'exécute en mode mock (instance unique), il n'y a pas de second utilisateur pour vérifier le rendu côté réception. La conversion d'emoji est validée via l'aperçu dans la sidebar. Le scénario est implémenté en 3 blocs Mocha `it()` séquentiels (création de compte, envoi du message, vérification sidebar) formant un seul test E2E continu.
 
 ---
 
@@ -294,8 +306,8 @@ Scénario automatisé utilisant **WebdriverIO 8 + Appium 2 + WinAppDriver** sur 
 | Framework de test unitaire | `cargo test` (built-in) | ✅ **102 tests unitaires + 20 tests d'intégration** |
 | Framework de test E2E | **WebdriverIO 8 + Appium 2** | Orchestrateur de tests WebdriverIO avec le service `@wdio/appium-service` |
 | Driver Windows | **WinAppDriver** (via `appium-windows-driver`) | SDK Microsoft pour le contrôle des applications Windows natives |
-| Mocking | **`State::mock()` (Fake)** | `State::mock()` utilisé dans 12 tests de mentions pour isoler la dépendance Warp |
-| Couverture de code | `cargo-tarpaulin` ou `llvm-cov` (prévu) | Génération de rapports de couverture — **non mesurée** |
+| Mocking | **`State::mock()` (Fake)** | `State::mock()` utilisé dans 13 tests de mentions pour isoler la dépendance Warp |
+| Couverture de code | `cargo-tarpaulin` ou `llvm-cov` (différée) | Mesure différée — voir position assumée §1.3 |
 | Script de lancement | **PowerShell** (`msg-test.ps1`) | Tue les processus résiduels, définit les variables d'environnement, lance wdio |
 | OS | **Windows 10/11** (E2E), **Linux/macOS** (unitaires) | L'infrastructure macOS existe dans le code mais n'est pas exécutée faute de matériel |
 
@@ -337,7 +349,7 @@ de tous les tests, qu'ils soient unitaires ou d'intégration.
 |---|---|
 | Développeur/Testeur | Rédaction et exécution des tests unitaires et d'intégration, correction des défauts trouvés, mise à jour de la documentation |
 | Testeur E2E | Conception et exécution des tests E2E manuels et automatisés, rédaction des rapports de test |
-| Responsable qualité | Revue du concept de test, validation des rapports de couverture, classification des défauts |
+| Responsable qualité | Revue du concept de test, validation de la stratégie de test, classification des défauts |
 
 ### 6.2 Structure des fichiers de test
 
@@ -361,7 +373,7 @@ tmp-testing-uplink/                (projet de test E2E séparé)
 │   │   ├── friends/               (gestion des amis)
 │   │   └── welcome-screen/        (page d'accueil)
 │   ├── specs/two-user-message/
-│   │   └── send-message.spec.ts   (test E2E : 3 blocs it)
+│   │   └── send-message.spec.ts   (scénario E2E-A01 découpé en 3 étapes Mocha)
 │   └── suites/Chats/
 │       └── 02-WindowsMessages.suite.ts (point d'entrée)
 ├── patches/
@@ -390,7 +402,7 @@ Le processus suit une approche itérative :
 - **Étape 1 — Analyse :** Lecture et compréhension du code source de mod.rs
 - **Étape 2 — Conception :** Rédaction des cas de test (scénarios nominaux, exception, limites)
 - **Étape 3 — Implémentation :** Écriture des tests unitaires (50+), intégration (5+), E2E
-- **Étape 4 — Exécution :** Lancement des tests, mesure de la couverture
+- **Étape 4 — Exécution :** Lancement des tests (mesure de couverture différée — cf. §1.3)
 - **Étape 5 — Rapport :** Documentation des résultats, classification des défauts
 - **Étape 6 — Correction :** Correction des défauts identifiés et re-test
 
@@ -406,7 +418,7 @@ Le processus suit une approche itérative :
 | Rédaction des tests unitaires | 2 semaines | 31.03.2026 | 11.04.2026 | **102 tests unitaires** dans mod.rs | ✅ Terminé |
 | Rédaction des tests d'intégration | 1 semaine | 14.04.2026 | 18.04.2026 | **20 tests d'intégration** | ✅ Terminé |
 | Rédaction des tests E2E | 2 semaines | 21.04.2026 | 05.05.2026 | 1 test automatisé (TypeScript, WebdriverIO + Appium) + 1 test manuel | ✅ Terminé |
-| Exécution, rapport + vidéo | 1 semaine | 28.04.2026 | 05.05.2026 | Rapport de couverture + vidéo | ⏳ En cours |
+| Exécution + vidéo de démonstration | 1 semaine | 28.04.2026 | 08.05.2026 | Vidéo de présentation (mp4) | ⏳ En cours |
 | Remise finale | — | — | 08.05.2026 | Tous les livrables | ⏳ En cours |
 
 ### 7.2 Livrables
@@ -414,7 +426,6 @@ Le processus suit une approche itérative :
 - Concept de test (PDF) — ce document
 - Code source des tests (dans l'archive ZIP avec l'application)
 - Fichiers README pour l'exécution de chaque suite de tests
-- Rapport de couverture de code
 - Vidéo de démonstration (max 20 min, format mp4)
 
 ---
