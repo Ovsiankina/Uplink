@@ -301,7 +301,7 @@ impl Extensions {
             .map(|(id, ext)| (self.enabled_extension(id), ext))
     }
 
-    pub fn ext(&self) -> hash_map::Keys<String, UplinkExtension> {
+    pub fn ext(&self) -> hash_map::Keys<'_, String, UplinkExtension> {
         self.map.keys()
     }
 

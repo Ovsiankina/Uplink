@@ -30,7 +30,7 @@ pub enum AuthPages {
 
 /// Guard the app's router with the login flow
 #[component]
-pub fn AuthGuard(cx: Scope, page: UseState<AuthPages>) -> Element {
+pub fn AuthGuard(cx: Scope, page: UseState<AuthPages>) -> Element<'a> {
     log::trace!("rendering auth guard");
 
     let pin = use_ref(cx, String::new);

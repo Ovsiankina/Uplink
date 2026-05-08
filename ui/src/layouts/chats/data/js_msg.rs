@@ -11,19 +11,3 @@ pub enum JsMsg {
     Top { key: Uuid },
     Bottom { key: Uuid },
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    // this test was used to determine how JsMsg is serialized.
-    #[test]
-    fn js_msg_test1() {
-        let m = JsMsg::Add {
-            msg_id: Uuid::new_v4(),
-            key: Uuid::new_v4(),
-        };
-        let _s = serde_json::to_string(&m).unwrap();
-        //assert_eq!(_s, "".to_string());
-    }
-}
