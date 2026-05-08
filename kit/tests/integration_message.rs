@@ -133,6 +133,7 @@ fn int_04_mixed_links_and_markdown() {
 ///
 /// Scénario: Un message contenant des balises de script ou d'événements HTML
 /// doit être complètement échappé pour prévenir les attaques XSS.
+// note: VIDEO
 #[test]
 fn int_05_xss_prevention_complete_formatting() {
     let text = "<script>alert('xss')</script> Hello **world**";
@@ -161,6 +162,7 @@ fn int_05_xss_prevention_complete_formatting() {
 
 /// INT-05b: Variation - Événements HTML malveillants
 /// Teste les balises d'événements qui tentent d'exécuter du JavaScript
+// note: VIDEO
 #[test]
 fn int_05b_event_handler_xss_prevention() {
     let text = "<img src=x onerror=\"alert('xss')\">";
@@ -190,6 +192,7 @@ fn int_05b_event_handler_xss_prevention() {
 ///
 /// Scénario: Un message avec un bloc de code contenant des emojis ASCII
 /// ne doit PAS convertir les emojis ASCII dans le code en vrais emojis.
+// note: VIDEO
 #[test]
 fn int_06_code_block_preserves_ascii_emojis() {
     let text = "Here's some code:\n```\nsmile = ':)'\nface = ':('\n```\nEnd";
