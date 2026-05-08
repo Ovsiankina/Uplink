@@ -2,19 +2,18 @@
 
 ---
 
-| | |
-|---|---|
 | **Projet** | Test complet de l'application Uplink |
+|---|---|
 | **Application** | Uplink — Messagerie P2P chiffrée |
-| **Repository** | github.com/Ovsiankina/Uplink |
-| **Version** | 0.1 |
-| **Date** | 26.03.2026 |
+| **Repository** | github.com/Ovsiankina/Uplink (Fork) |
+| **Version** | 0.* |
+| **Date** | 26/03/2026 |
 
-### Historique des révisions
+## Historique des révisions
 
 | Date | Version | Description | Auteur |
 |------|---------|-------------|--------|
-| 26.03.2026 | 0.1 | Création initiale du concept de test | Mostoslavski David |
+| 26.03.2026 | 0.2 | Création initiale du concept de test | Mostoslavski David |
 
 ---
 
@@ -54,7 +53,7 @@ Les objectifs visés sont :
 
 ### 1.3 Critères de couverture
 
-L'objectif de couverture de code est fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). Les composants UI seront couverts partiellement par les tests d'intégration et E2E.
+L'objectif de couverture de code est fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). Les composants UI seront couverts que très partiellement par les tests d'intégration et E2E.
 
 ---
 
@@ -62,7 +61,7 @@ L'objectif de couverture de code est fixé à **80% minimum** sur les fonctions 
 
 ### 2.1 Description générale de l'application
 
-**Uplink** est une application de messagerie P2P (pair-à-pair) sécurisée et chiffrée de bout en bout. Elle est construite au-dessus de Warp, IPFS et LibP2P. L'interface utilisateur est développée intégralement en Rust avec le framework Dioxus. L'application est actuellement en phase alpha.
+**Uplink** est une application de messagerie P2P (pair-à-pair) sécurisée et chiffrée de bout en bout. L'interface utilisateur est développée intégralement en Rust avec le framework Dioxus. L'application est actuellement en phase alpha expérimentale.
 
 Les principales fonctionnalités d'Uplink sont :
 
@@ -108,7 +107,7 @@ Les dépendances externes majeures incluent : Dioxus (UI), Warp/IPFS (réseau P2
 
 ### 3.1 Approche de priorisation
 
-Dans un contexte de ressources et de temps limités, il est nécessaire de prioriser les efforts de test. La sélection du périmètre s'appuie sur une analyse croisant trois critères :
+Dans un contexte de ressources et de temps limités, il est nécessaire de prioriser les efforts de test sur un set de modules limité et pré-définis. La sélection du périmètre s'appuie sur une analyse croisant trois critères :
 
 - **Risque métier :** l'impact sur l'utilisateur final si le module est défaillant
 - **Testabilité :** la facilité à écrire des tests automatisés isolés, sans dépendances lourdes (réseau, hardware)
@@ -129,6 +128,8 @@ Le module **message** (`kit/src/components/message/mod.rs`) a été retenu comme
 **5. Le retour sur investissement est maximal.** En testant ce module en profondeur, on obtient une couverture de la fonctionnalité la plus utilisée de l'application tout en construisant une suite de tests réutilisable. Les tests créés ici pourront servir de socle de régression pour toutes les évolutions futures du système de messagerie.
 
 > **Note :** Nous reconnaissons qu'une approche plus conventionnelle commencerait par tester les couches les plus critiques du point de vue système — typiquement la gestion de l'état (`common/state`) ou la couche réseau. Cependant, la couche réseau d'Uplink repose entièrement sur Warp/IPFS, qui sont des dépendances externes avec leur propre suite de tests. Tester ces couches reviendrait en grande partie à tester des bibliothèques tierces plutôt que la logique propre à Uplink. Le module message, en revanche, contient de la logique 100% propre au projet, ce qui maximise la pertinence des tests écrits.
+
+> **Note :** Sur la fonctionnalité de communication P2P, ce module n'a pas été séléctionné alors qu'il est au coeur même du marketing et de l'image même de l'application Uplink. Cependant, cette stack software dépend exclusivement de la dépendance `Wrap`. Nous estimons qu'il n'est pas de notre résponsabilité de tester les dépendances.
 
 ### 3.3 Périmètre détaillé du module message
 
@@ -173,10 +174,13 @@ La stratégie de test suit la pyramide de tests classique, avec une base solide 
 
 | Niveau | Quantité min. | Cible | Approche |
 |---|---|---|---|
-| Tests unitaires | 50+ | Fonctions pures : `format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor` | Automatique (`cargo test`) |
+| Tests unitaires | 70+ | Fonctions pures : `format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor` | Automatique (`cargo test`) |
 | Tests d'intégration | 5+ | Interaction entre `format_text`, `markdown` et `wrap_links_with_a_tags` ; chaînes de formatage complètes | Automatique (`cargo test`) |
 | Tests E2E manuels | 1+ | Envoi et réception d'un message avec formatage markdown dans l'interface complète | Manuel |
-| Tests E2E automatisés | 1+ | Scénario d'envoi de message via l'interface | Automatique (Selenium / Playwright / autre) |
+| Tests E2E automatisés | 1+ | Scénario d'envoi d'un émoticône en ASCII et vérification de son replacement par un emoji Unicode dans la sidebar de l'historique des "chats".  | Automatique (Appium, WinAppDriver, uniquement Windows 11)[^1] |
+
+
+[^1]: L'app utilise des WebView multiplateformes (WebView2 sur Windows, WebKit sur macOS, et WebKitGTK sur Linux), ce qui rend l'automatisation e2e multiplatform complexe. Les frameworks e2e traditionnels comme Playwright sont incompatibles avec les WebView, nécessitant une approche basée sur le contrôle des périphériques via curseur virtuel et input clavier. Sur Linux, cette approche demande des modifications système pour fonctionner correctement. MacOS et Windows 10/11 supportent cela nativement via Appium. Faute de budget, les tests sur macOS ne sont pas possibles. L'équipe implémente donc les tests e2e automatisés exclusivement sur Windows 11 avec WinAppDrive, un SDK Microsoft officiel permettant le contrôle des périphériques.
 
 ### 4.2 Tests unitaires
 
