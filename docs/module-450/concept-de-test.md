@@ -53,7 +53,7 @@ Les objectifs visés sont :
 
 ### 1.3 Critères de couverture
 
-L'objectif de couverture de code est fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). Les composants UI seront couverts que très partiellement par les tests d'intégration et E2E.
+L'objectif de couverture de code était fixé à **80% minimum** sur les fonctions pures du périmètre sélectionné (cf. section 3). Dans le cadre de cette campagne, seuls les tests E2E automatisés ont été implémentés — les tests unitaires et d'intégration prévus n'ont pas été rédigés. Aucune mesure de couverture n'a donc été effectuée.
 
 ---
 
@@ -160,7 +160,9 @@ Les éléments suivants ne sont **pas** couverts par cette campagne de tests :
 - Les appels réseau et la communication IPFS
 - Les modules audio/vidéo (WebRTC)
 - Le système d'extensions
-- Les modules UI autres que le composant message (settings, friends, etc.)
+- Les modules UI autres que le composant message (settings, etc.) pour les tests unitaires
+
+**Note :** Le test E2E automatisé utilise les écrans Friends et Welcome ainsi que la sidebar comme infrastructure de navigation pour atteindre la fonctionnalité de message — cela ne constitue pas un test de ces écrans en eux-mêmes.
 
 Ces modules pourront faire l'objet de campagnes de tests ultérieures, en suivant la même méthodologie.
 
@@ -174,13 +176,15 @@ La stratégie de test suit la pyramide de tests classique, avec une base solide 
 
 | Niveau | Quantité min. | Cible | Approche |
 |---|---|---|---|
-| Tests unitaires | 70+ | Fonctions pures : `format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor` | Automatique (`cargo test`) |
-| Tests d'intégration | 5+ | Interaction entre `format_text`, `markdown` et `wrap_links_with_a_tags` ; chaînes de formatage complètes | Automatique (`cargo test`) |
+| Tests unitaires | 0 (non implémentés) | Fonctions pures : `format_text`, `markdown`, `replace_emojis`, `wrap_links_with_a_tags`, `is_only_emojis`, `process_string`, `stack_processor` | Automatique (`cargo test`) — **non rédigés** |
+| Tests d'intégration | 0 (non implémentés) | Interaction entre `format_text`, `markdown` et `wrap_links_with_a_tags` ; chaînes de formatage complètes | Automatique (`cargo test`) — **non rédigés** |
 | Tests E2E manuels | 1+ | Envoi et réception d'un message avec formatage markdown dans l'interface complète | Manuel |
-| Tests E2E automatisés | 1+ | Scénario d'envoi d'un émoticône en ASCII et vérification de son replacement par un emoji Unicode dans la sidebar de l'historique des "chats".  | Automatique (Appium, WinAppDriver, uniquement Windows 11)[^1] |
+| Tests E2E automatisés | 1 | Scénario d'envoi d'un émoticône en ASCII et vérification de son replacement par un emoji Unicode dans la sidebar de l'historique des "chats".  | Automatique (WebdriverIO 8 + Appium + WinAppDriver, uniquement Windows)[^1] |
 
 
-[^1]: L'app utilise des WebView multiplateformes (WebView2 sur Windows, WebKit sur macOS, et WebKitGTK sur Linux), ce qui rend l'automatisation e2e multiplatform complexe. Les frameworks e2e traditionnels comme Playwright sont incompatibles avec les WebView, nécessitant une approche basée sur le contrôle des périphériques via curseur virtuel et input clavier. Sur Linux, cette approche demande des modifications système pour fonctionner correctement. MacOS et Windows 10/11 supportent cela nativement via Appium. Faute de budget, les tests sur macOS ne sont pas possibles. L'équipe implémente donc les tests e2e automatisés exclusivement sur Windows 11 avec WinAppDrive, un SDK Microsoft officiel permettant le contrôle des périphériques.
+[^1]: L'app utilise des WebView multiplateformes (WebView2 sur Windows, WebKit sur macOS, et WebKitGTK sur Linux), ce qui rend l'automatisation e2e multiplatform complexe. Les frameworks e2e traditionnels comme Playwright sont incompatibles avec les WebView, nécessitant une approche basée sur le contrôle des périphériques via curseur virtuel et input clavier. L'équipe a choisi **WebdriverIO 8** comme orchestrateur de tests, avec **Appium 2** comme serveur et **WinAppDriver** comme driver Windows — un SDK Microsoft officiel permettant le contrôle des applications natives. L'infrastructure macOS (Mac2Driver, sélecteurs XCUI, helpers) est maintenue dans le code source mais n'est pas exécutée faute de matériel de test disponible. Les tests sont donc exécutés exclusivement sur Windows 10/11.
+
+**Mode mock :** Le test utilise le flag `--with-mock` d'Uplink qui génère 20 amis et conversations factices localement sans nécessiter de réseau P2P, combiné à `--discovery disable` pour éviter le blocage au démarrage. Cela permet d'exécuter le scénario complet sur une seule instance Uplink, ce qui est nécessaire car WinAppDriver lie chaque session WebDriver à un seul processus.
 
 ### 4.2 Tests unitaires
 
@@ -229,7 +233,17 @@ Scénario : Un utilisateur envoie un message contenant du texte en gras, un lien
 
 **Test E2E automatisé (E2E-A01) :**
 
-Scénario automatisé utilisant un framework d'automatisation (ex. : test d'interface Dioxus ou Selenium sur la version web). Le test vérifie l'envoi d'un message et la présence du texte formaté dans le DOM.
+Scénario automatisé utilisant **WebdriverIO 8 + Appium 2 + WinAppDriver** sur Windows. Le test est implémenté en **TypeScript** dans un projet séparé (`tmp-testing-uplink/`) et utilise le Pattern Page Object Model.
+
+| Étape | Action | Résultat attendu |
+|---|---|---|
+| 1 | Uplink se lance avec `--with-mock --discovery disable` (via les capabilities Appium) | L'application s'ouvre, l'écran de PIN s'affiche |
+| 2 | Saisir le PIN `1234` → cliquer sur "Create Account" → choisir "Create Account" → saisir le nom d'utilisateur "MockTester" → cliquer sur "Create Account" → cliquer sur "I Saved It" | L'écran d'accueil (WelcomeScreen) s'affiche |
+| 3 | Naviguer vers Friends → cliquer sur "Chat With Friend" du premier ami mock | La conversation s'ouvre, la barre de saisie est prête |
+| 4 | Saisir `:)` dans la barre de saisie → cliquer sur Envoyer | Le message est envoyé |
+| 5 | Vérifier que la sidebar affiche `🙂` comme dernier message de la conversation | La sidebar contient `🙂` (preuve que `replace_emojis` a converti `:)` en 🙂) |
+
+**Remarque :** Le test s'exécute en mode mock (instance unique), il n'y a pas de second utilisateur pour vérifier le rendu côté réception. La conversion d'emoji est validée via l'aperçu dans la sidebar.
 
 ---
 
@@ -239,14 +253,15 @@ Scénario automatisé utilisant un framework d'automatisation (ex. : test d'inte
 
 | Composant | Technologie | Détail |
 |---|---|---|
-| Langage | Rust | Le code source et les tests sont écrits en Rust |
-| Framework de test unitaire | `cargo test` (built-in) | Framework de test intégré à Rust avec le module `#[cfg(test)]` |
-| Framework de test d'intégration | `cargo test` (tests/ directory) | Tests d'intégration dans le répertoire `tests/` du crate kit |
-| Framework E2E automatisé | Au choix : Selenium, Playwright, ou tests Dioxus natifs | Outil libre selon la configuration du projet |
-| Mocking | `mockall` ou implémentation manuelle | Pour isoler les dépendances (State, Warp, etc.) |
-| Couverture de code | `cargo-tarpaulin` ou `llvm-cov` | Génération de rapports de couverture |
-| CI/CD | GitHub Actions | Workflows déjà présents dans `.github/workflows` |
-| OS | Linux / macOS / Windows | Multi-plateforme, tests exécutés sur l'OS du développeur |
+| Langage (tests unitaires) | Rust | Les tests unitaires seraient écrits en Rust avec `#[cfg(test)]` |
+| Langage (tests E2E) | **TypeScript** | Le test E2E automatisé est écrit en TypeScript, exécuté via WebdriverIO |
+| Framework de test unitaire | `cargo test` (built-in) | Framework de test intégré à Rust — **non utilisé dans cette campagne** |
+| Framework de test E2E | **WebdriverIO 8 + Appium 2** | Orchestrateur de tests WebdriverIO avec le service `@wdio/appium-service` pour lancer Appium automatiquement |
+| Driver Windows | **WinAppDriver** (via `appium-windows-driver`) | SDK Microsoft pour le contrôle des applications Windows natives via UI Automation (UIA) |
+| Mocking | `mockall` ou implémentation manuelle (prévu) | Pour isoler les dépendances (State, Warp, etc.) — **non implémenté** |
+| Couverture de code | `cargo-tarpaulin` ou `llvm-cov` (prévu) | Génération de rapports de couverture — **non mesurée** |
+| Script de lancement | **PowerShell** (`msg-test.ps1`) | Tue les processus résiduels, définit les variables d'environnement, lance wdio |
+| OS | **Windows 10/11** uniquement | L'infrastructure macOS existe dans le code mais n'est pas exécutée |
 
 ### 5.2 Données de test
 
@@ -263,14 +278,21 @@ Les tests utilisent trois types de données de test :
 Commandes pour exécuter les différents types de tests :
 
 ```bash
-# Tests unitaires
+# Tests unitaires (non implémentés — commande théorique)
 cargo test --package kit --lib components::message
 
-# Tests d'intégration
+# Tests d'intégration (non implémentés — commande théorique)
 cargo test --package kit --test integration_message
 
-# Couverture de code
+# Couverture de code (non mesurée — commande théorique)
 cargo tarpaulin --packages kit --out Html
+
+# Lancer le test E2E automatisé sur Windows
+# Depuis le répertoire tmp-testing-uplink/
+.\msg-test.ps1
+
+# Ou directement avec npx
+npx cross-env DRIVER=windows npx wdio config/wdio.windows.chats.conf.ts
 ```
 
 ---
@@ -287,19 +309,46 @@ cargo tarpaulin --packages kit --out Html
 
 ### 6.2 Structure des fichiers de test
 
-Les tests sont organisés selon la convention Rust :
+Les tests E2E automatisés sont organisés dans un projet séparé (hors du workspace Rust Uplink) :
+
+```
+tmp-testing-uplink/                (projet de test E2E séparé)
+├── config/
+│   ├── wdio.shared.conf.ts        (configuration partagée : Appium service, timeouts, Mocha)
+│   └── wdio.windows.chats.conf.ts (configuration Windows : mock mode, cleanup hooks)
+├── tests/
+│   ├── helpers/
+│   │   ├── constants.ts           (chemins, clés DID, noms de drivers)
+│   │   ├── commands.ts            (cycle de vie, cache utilisateur, clavier, clics)
+│   │   └── commandsNewUser.ts     (flux complet de création de compte)
+│   ├── screenobjects/             (Page Object Model)
+│   │   ├── AppScreen.ts           (classe de base)
+│   │   ├── UplinkMainScreen.ts    (navbar, toasts, menus contextuels)
+│   │   ├── account-creation/      (PIN, création, username, seed)
+│   │   ├── chats/                 (sidebar, barre de saisie)
+│   │   ├── friends/               (gestion des amis)
+│   │   └── welcome-screen/        (page d'accueil)
+│   ├── specs/two-user-message/
+│   │   └── send-message.spec.ts   (test E2E : 3 blocs it)
+│   └── suites/Chats/
+│       └── 02-WindowsMessages.suite.ts (point d'entrée)
+├── patches/
+│   └── appium-windows-driver+2.12.32.patch (correctif HTTP 500 du /status)
+├── msg-test.ps1                   (script PowerShell de lancement)
+├── package.json                   (dépendances npm)
+└── tsconfig.json
+```
+
+Les tests unitaires et d'intégration (Rust) seraient organisés selon la convention Rust standard :
 
 ```
 kit/
 ├── src/
 │   └── components/
 │       └── message/
-│           └── mod.rs              (tests unitaires inline #[cfg(test)])
-├── tests/
-│   └── integration_message.rs      (tests d'intégration)
-└── e2e/
-    ├── manual_e2e_message.md       (procédure E2E manuelle)
-    └── auto_e2e_message.rs         (test E2E automatisé)
+│           └── mod.rs              (tests unitaires inline #[cfg(test)] — non rédigés)
+└── tests/
+    └── integration_message.rs      (tests d'intégration — non rédigés)
 ```
 
 ### 6.3 Processus de test
@@ -319,14 +368,14 @@ Le processus suit une approche itérative :
 
 ### 7.1 Planning prévisionnel
 
-| Phase | Durée | Début | Fin | Livrable |
-|---|---|---|---|---|
-| Analyse du code + rédaction du concept | 1 semaine | 24.03.2026 | 28.03.2026 | Concept de test (ce document) |
-| Rédaction des tests unitaires | 2 semaines | 31.03.2026 | 11.04.2026 | 50+ tests unitaires dans mod.rs |
-| Rédaction des tests d'intégration | 1 semaine | 14.04.2026 | 18.04.2026 | 5+ tests d'intégration |
-| Rédaction des tests E2E | 1 semaine | 21.04.2026 | 25.04.2026 | 1 test manuel + 1 test automatisé |
-| Exécution, rapport + vidéo | 1 semaine | 28.04.2026 | 05.05.2026 | Rapport de couverture + vidéo |
-| Remise finale | — | — | 08.05.2026 | Tous les livrables |
+| Phase | Durée | Début | Fin | Livrable | Statut |
+|---|---|---|---|---|---|
+| Analyse du code + rédaction du concept | 1 semaine | 24.03.2026 | 28.03.2026 | Concept de test (ce document) | ✅ Terminé |
+| Rédaction des tests unitaires | 2 semaines | 31.03.2026 | 11.04.2026 | 50+ tests unitaires dans mod.rs | ❌ **Non implémenté** |
+| Rédaction des tests d'intégration | 1 semaine | 14.04.2026 | 18.04.2026 | 5+ tests d'intégration | ❌ **Non implémenté** |
+| Rédaction des tests E2E | 2 semaines | 21.04.2026 | 05.05.2026 | 1 test automatisé (TypeScript, WebdriverIO + Appium) | ✅ Terminé (développement concentré ici) |
+| Exécution, rapport + vidéo | 1 semaine | 28.04.2026 | 05.05.2026 | Rapport de couverture + vidéo | ⏳ En cours |
+| Remise finale | — | — | 08.05.2026 | Tous les livrables | ⏳ En cours |
 
 ### 7.2 Livrables
 
@@ -380,12 +429,13 @@ Les conditions suivantes doivent être remplies avant de commencer les tests :
 
 Les tests sont considérés terminés lorsque :
 
-- Tous les 50+ tests unitaires passent avec succès
-- Tous les 5+ tests d'intégration passent avec succès
-- Les tests E2E (1 manuel + 1 automatisé) ont été exécutés et documentés
-- La couverture de code atteint ≥ 80% sur les fonctions cibles
+- Le test E2E automatisé (E2E-A01) a été exécuté avec succès et documenté
+- La procédure de test E2E manuelle (E2E-M01) a été rédigée et peut être exécutée
+- La vidéo de démonstration a été réalisée
 - Aucun défaut de sévérité S1 ou S2 n'est ouvert
 - Les rapports et la documentation sont complets
+
+**Note :** Les critères de 50+ tests unitaires, 5+ tests d'intégration et 80% de couverture de code, initialement prévus dans ce concept, n'ont pas été atteints dans le cadre de cette campagne.
 
 ### 9.3 Critères de suspension
 

@@ -948,4 +948,278 @@ mod tests {
         assert!(result.contains("<del>"));
         assert!(result.contains("<code>"));
     }
+
+    // ============ Mention tests (with mocked State) ============
+
+    use std::collections::{HashMap, HashSet, VecDeque};
+    use warp::crypto::DID;
+    use warp::raygun::ConversationSettings;
+    use common::state::{Chat, Chats, Friends, Identity};
+
+    /// Helper: create a minimal State with two identities ("me" and "Bob")
+    /// and one direct chat containing both.
+    fn create_mention_test_state() -> (State, Uuid, Identity, Identity) {
+        let mut me = Identity::default();
+        me.set_username("Alice");
+
+        let mut bob = Identity::default();
+        bob.set_username("Bob");
+
+        let me_did = me.did_key();
+        let bob_did = bob.did_key();
+
+        let mut identities: HashMap<DID, Identity> = HashMap::new();
+        identities.insert(me_did.clone(), me.clone());
+        identities.insert(bob_did.clone(), bob.clone());
+
+        let chat_id = Uuid::new_v4();
+        let mut participants = HashSet::new();
+        participants.insert(me_did);
+        participants.insert(bob_did);
+
+        let chat = Chat::new(
+            chat_id,
+            participants,
+            ConversationSettings::Direct(Default::default()),
+            None,
+            None,
+            VecDeque::new(),
+            vec![],
+        );
+
+        let mut all_chats = HashMap::new();
+        all_chats.insert(chat_id, chat);
+
+        let chats = Chats {
+            all: all_chats,
+            active: Some(chat_id),
+            active_media: None,
+            in_sidebar: VecDeque::new(),
+            favorites: vec![],
+            readd_sidebars: false,
+        };
+
+        let friends = Friends {
+            all: HashSet::new(),
+            blocked: HashSet::new(),
+            incoming_requests: HashSet::new(),
+            outgoing_requests: HashSet::new(),
+        };
+
+        let storage = common::state::storage::Storage::default();
+
+        let state = State::mock(me.clone(), identities, chats, friends, storage);
+        (state, chat_id, me, bob)
+    }
+
+    #[test]
+    fn format_text_with_did_mention() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Hello @{} ", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // The mention should be replaced with a user tag
+        assert!(result.contains("message-user-tag"), "Mention should produce a user tag");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+        assert!(result.contains(&bob.did_key().to_string()), "Tag should contain the DID");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_and_markdown() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("**Hi** @{} how are you?", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Markdown should be applied
+        assert!(result.contains("<strong>"), "Markdown bold should be applied");
+        // Mention should be rendered
+        assert!(result.contains("message-user-tag"), "Mention should produce a user tag");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_and_emoji() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("@{} :)", bob.did_key());
+        let result = format_text(&mention, false, true, Some((&state, &chat_id, false)));
+
+        // Mention should be rendered
+        assert!(result.contains("message-user-tag"), "Mention should produce a user tag");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+        // Emoji should be converted
+        assert!(result.contains("🙂"), "Emoji should be converted");
+    }
+
+    #[test]
+    fn format_text_with_multiple_did_mentions() {
+        // Create a state with a third participant "Charlie"
+        let mut me = Identity::default();
+        me.set_username("Alice");
+
+        let mut bob = Identity::default();
+        bob.set_username("Bob");
+
+        let mut charlie = Identity::default();
+        charlie.set_username("Charlie");
+
+        let me_did = me.did_key();
+        let bob_did = bob.did_key();
+        let charlie_did = charlie.did_key();
+
+        let mut identities: HashMap<DID, Identity> = HashMap::new();
+        identities.insert(me_did.clone(), me.clone());
+        identities.insert(bob_did.clone(), bob.clone());
+        identities.insert(charlie_did.clone(), charlie.clone());
+
+        let chat_id = Uuid::new_v4();
+        let mut participants = HashSet::new();
+        participants.insert(me_did);
+        participants.insert(bob_did.clone());
+        participants.insert(charlie_did.clone());
+
+        let chat = Chat::new(
+            chat_id,
+            participants,
+            ConversationSettings::Direct(Default::default()),
+            None,
+            None,
+            VecDeque::new(),
+            vec![],
+        );
+
+        let mut all_chats = HashMap::new();
+        all_chats.insert(chat_id, chat);
+
+        let chats = Chats {
+            all: all_chats,
+            active: Some(chat_id),
+            active_media: None,
+            in_sidebar: VecDeque::new(),
+            favorites: vec![],
+            readd_sidebars: false,
+        };
+
+        let state = State::mock(me.clone(), identities, chats, Friends::default(), common::state::storage::Storage::default());
+
+        let mention = format!("Hey @{} and @{} ", bob.did_key(), charlie.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Both mentions should be rendered
+        assert!(result.contains("message-user-tag"), "Mentions should produce user tags");
+        assert!(result.contains("@Bob"), "First mention should contain Bob");
+        assert!(result.contains("@Charlie"), "Second mention should contain Charlie");
+
+        // Count occurrences of message-user-tag — should be 2
+        let tag_count = result.matches("message-user-tag").count();
+        assert_eq!(tag_count, 2, "Both mentions should be rendered");
+    }
+
+    #[test]
+    fn format_text_with_non_participant_did() {
+        let (state, chat_id, _me, _bob) = create_mention_test_state();
+
+        // Create a DID that is NOT in the chat participants
+        let stranger = Identity::default();
+        let mention = format!("Hello @{} ", stranger.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // The non-participant DID should NOT be turned into a tag
+        // (parse_mentions keeps it as-is when no match is found)
+        assert!(!result.contains("message-user-tag"), "Non-participant should not be tagged");
+        // The DID text should still appear in the output
+        assert!(result.contains(&stranger.did_key().to_string()), "DID text should be preserved");
+    }
+
+    #[test]
+    fn format_text_with_self_mention() {
+        let (state, chat_id, me, _bob) = create_mention_test_state();
+        let mention = format!("Hey @{} ", me.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Self-mention should also produce a tag
+        assert!(result.contains("message-user-tag"), "Self-mention should produce a user tag");
+        assert!(result.contains("@Alice"), "Tag should contain self username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_visual_mode() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Hi @{} ", bob.did_key());
+        // With visual = true
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, true)));
+
+        // When visual = true, the tag should have class "visual-only"
+        assert!(result.contains("visual-only"), "Visual mode should add visual-only class");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_at_start() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("@{} look here", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        assert!(result.contains("message-user-tag"), "Mention at start should work");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_at_end() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("See this @{}", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        assert!(result.contains("message-user-tag"), "Mention at end should work");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
+
+    #[test]
+    fn format_text_with_did_mention_in_code_block() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Code: `@{}`", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Mentions inside backtick code blocks should NOT be replaced
+        assert!(!result.contains("message-user-tag"), "Mention in code block should not be tagged");
+        // The raw DID text should appear inside the code span
+        assert!(result.contains("<code>"), "Code block should be rendered");
+    }
+
+    #[test]
+    fn format_text_without_state_no_mention_replacement() {
+        let (_state, _chat_id, _me, bob) = create_mention_test_state();
+        let mention = format!("Hello @{} ", bob.did_key());
+        // When no state is passed (None), no mention replacement should happen
+        let result = format_text(&mention, true, false, None);
+
+        assert!(!result.contains("message-user-tag"), "Without state, no tag should be produced");
+        assert!(result.contains(&bob.did_key().to_string()), "Raw DID text should be preserved");
+    }
+
+    #[test]
+    fn format_text_with_mention_and_xss_prevention() {
+        let (state, chat_id, _me, _bob) = create_mention_test_state();
+        let mention = "<script>alert('xss')</script>";
+        let result = format_text(mention, true, false, Some((&state, &chat_id, false)));
+
+        // HTML should be escaped even when state is present
+        assert!(result.contains("&lt;script&gt;"), "XSS should be prevented");
+        assert!(!result.contains("<script>"), "Raw script tag should not appear");
+    }
+
+    #[test]
+    fn format_text_with_mention_markdown_and_xss() {
+        let (state, chat_id, _me, bob) = create_mention_test_state();
+        // Combine mention, markdown, and XSS attempt
+        let mention = format!("**bold** <script>x</script> @{}", bob.did_key());
+        let result = format_text(&mention, true, false, Some((&state, &chat_id, false)));
+
+        // Markdown works
+        assert!(result.contains("<strong>"), "Markdown should be applied");
+        // XSS is prevented
+        assert!(result.contains("&lt;script&gt;"), "XSS should be prevented");
+        // Mention works
+        assert!(result.contains("message-user-tag"), "Mention should be rendered");
+        assert!(result.contains("@Bob"), "Tag should contain the username");
+    }
 }
